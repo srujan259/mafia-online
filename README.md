@@ -19,7 +19,8 @@ Requires Node.js 20 or newer and a LiveKit Cloud project. This checkout uses a l
 
 The text after `#` is an explanation, not a value passed to Convex. Replace the examples with your real LiveKit values at the prompts. This keeps the secret out of shell history.
 
-4. In that second terminal, run `npm run dev` and open `http://127.0.0.1:3000`. Create a room and share its link with five or more playing friends. Everyone joins the call, waits for the **Live** indicator, then readies up. The room organizer can then start. For a volunteer moderator, choose that narration mode in the lobby and have one person volunteer before everyone readies up; this requires at least seven people in total. The volunteer can also start the game.
+4. Create your own one-time invitation with `CONVEX_AGENT_MODE=anonymous node scripts/create-invite.mjs "Your name"`. Save the printed code and paste it into the site. The local Convex backend must be running first.
+5. In that second terminal, run `npm run dev` and open `http://127.0.0.1:3000`. Enter your invitation, create a room, and share its room link with five or more playing friends. Each friend needs their own one-time site invitation **and** the room code. Everyone joins the call, waits for the **Live** indicator, then readies up. The room organizer can then start. For a volunteer moderator, choose that narration mode in the lobby and have one person volunteer before everyone readies up; this requires at least seven people in total. The volunteer can also start the game.
 
 When using a Convex account and a cloud development deployment later, run `npx convex dev` and the same `npx convex env set NAME` commands without the `CONVEX_AGENT_MODE=anonymous` prefix. Local development is only available on your computer; hosting the game online requires a production Convex deployment.
 
@@ -29,7 +30,7 @@ In automatic mode, the narrator speaks wake-up cues using your browser's voice o
 
 The game enforces secret roles, turn order, server-controlled phase changes, and private call access. It cannot tell whether someone texts another player, shares a screen outside the game, or uses a second device. Agree on fair play with your group before starting.
 
-For a local interface check, `node scripts/fill-local-room.mjs ROOM_CODE` adds five ready test seats in automatic mode; use `node scripts/fill-local-room.mjs ROOM_CODE 6` for a volunteer moderator who sits out. The helper now saves its test sessions locally in `.mafia-test-seats.json` (gitignored), so rerunning the same command refreshes their presence and readiness. Start within a minute of the last run, since test seats do not send heartbeats. Seats created by an older version of the helper cannot be refreshed; remove those seats in the lobby or create a new room before rerunning. These seats are not bots: they do not join calls, vote, or use night actions. Use real friends to test actual gameplay.
+For a local interface check, `CONVEX_AGENT_MODE=anonymous node scripts/fill-local-room.mjs ROOM_CODE` adds five ready test seats in automatic mode; add `6` for a volunteer moderator who sits out. The helper issues test invitations through the Convex CLI, then saves its test sessions in `.mafia-test-seats.json` (gitignored). Rerunning the same command refreshes their presence and readiness. Start within a minute of the last run, since test seats do not send heartbeats. Seats created by an older version of the helper cannot be refreshed; remove those seats in the lobby or create a new room before rerunning. These seats are not bots: they do not join calls, vote, or use night actions. Use real friends to test actual gameplay.
 
 If you only want to exercise game rules without a LiveKit project, set `ALLOW_NO_MEDIA=true` **on a local development Convex deployment only**. The game can then start, but the video panel shows setup is still needed. Do not use that setting for a hosted game.
 
@@ -43,8 +44,14 @@ npx convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd 'npm run b
 
 Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on the **production Convex deployment** before hosting a game. They do not belong in Vercel's public environment variables. Each environment needs its own Convex configuration. Then do a multi-device test of lobby, private Mafia night, day, voting, and reconnection before inviting a full group.
 
+After the new Convex functions have deployed, run `node scripts/create-invite.mjs "Your name" --prod` from a terminal signed in to the **same Convex project**. Paste the printed one-time code into the deployed site. Repeat with a separate label for each person you invite. A code expires after seven days if unused. Once claimed, it is bound to that browser's stored guest secret; clearing site data or moving to another device requires a new invitation. An admitted guest may create rooms but still needs a room's six-character code to join it. The website itself remains publicly viewable; game creation, room joining, state, and media access are enforced by Convex. This is possession-based invitation access, not verified email identity.
+
+The invite command prints an invitation ID. To revoke access later, run `npx convex run invitations:revoke '{"invitationId":"PASTE_ID"}' --prod`. Do not publish invitation codes. The CLI functions that issue and revoke them are internal, so website visitors cannot call them.
+
+For a solo production flow check, set `NEXT_PUBLIC_CONVEX_URL` to the **production Convex URL** before running `node scripts/fill-local-room.mjs ROOM_CODE`. The helper derives the target deployment from that URL and will create test invitations and seats in that deployment. Use a throwaway room; these seats cannot test real video or hidden-role conversations.
+
 ## Check the code
 
-`npm run check` runs TypeScript, the rules and access tests, and the production build. The automated tests cover the automatic game cycle, manual moderator phases, and privacy boundaries. Actual camera, microphone, and cross-device calls still need a LiveKit-backed playtest.
+`npm run check` runs TypeScript, the rules and access tests, and the production build. The automated tests cover invitation admission and revocation, the automatic game cycle, manual moderator phases, and privacy boundaries. Actual camera, microphone, and cross-device calls still need a LiveKit-backed playtest.
 
 The implementation follows the [Convex Vercel deployment guide](https://docs.convex.dev/production/hosting/vercel) and [LiveKit server SDK](https://docs.livekit.io/reference/server-sdk-js/) guidance.

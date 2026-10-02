@@ -7,10 +7,10 @@ This describes the current implementation. The [product plan](PLAN.md) covers de
 | Service | Responsibility |
 | --- | --- |
 | Vercel / Next.js | Serves the website and runs the browser interface. |
-| Convex | Stores rooms, players, choices, and events; enforces game rules and permissions; streams each player's allowed state; schedules automatic phase changes; issues LiveKit access tokens. |
+| Convex | Stores invitations, rooms, players, choices, and events; enforces game rules and permissions; streams each player's allowed state; schedules automatic phase changes; issues LiveKit access tokens. |
 | LiveKit Cloud | Carries the actual camera and microphone streams. It has a shared table room, phase-specific private Mafia rooms, and an audio-only moderator channel when a player volunteers to moderate. |
 
-The browser talks to Convex for game actions and state, and to LiveKit for media. The LiveKit API secret stays in Convex; the browser receives only a short-lived token for the room it may join.
+The browser talks to Convex for game actions and state, and to LiveKit for media. An invite must be redeemed before game access. The LiveKit API secret stays in Convex; the browser receives only a short-lived token for the room it may join.
 
 ## What each resource actually does
 
@@ -18,7 +18,7 @@ The browser talks to Convex for game actions and state, and to LiveKit for media
 | --- | --- | --- |
 | Player's browser | **Client application and device APIs** | React draws the screens. Local storage remembers a guest secret and seat. Browser speech synthesis reads automatic cues. Camera and microphone access happens on the player's device. |
 | Vercel + Next.js | **Frontend build and web hosting** | Vercel builds and serves the site. The deployed JavaScript knows the public Convex URL, then runs in each player's browser. |
-| Convex database | **Persistent documents and indexes** | `games`, `players`, `choices`, `investigations`, and `events` survive refreshes. Indexes look up rooms by code, players by game or session, and choices by game and phase epoch. |
+| Convex database | **Persistent documents and indexes** | `invitations`, `games`, `players`, `choices`, `investigations`, and `events` survive refreshes. Indexes look up invitations by hash or claimed session, rooms by code, players by game or session, and choices by game and phase epoch. |
 | Convex functions | **Server-side application logic** | Queries read permitted state; mutations validate and atomically change game records; actions call LiveKit using server-held secrets. |
 | Convex subscriptions | **Realtime state sync** | Each browser subscribes to `games.state`. When a relevant database record changes, Convex sends that player's updated view over its client connection, so the roster, phase, and result update without polling the full game. |
 | Convex scheduler | **Durable background jobs** | Automatic narration mode schedules the next phase at a deadline. Transitions schedule LiveKit room cleanup and retry it on failure. |
@@ -29,9 +29,9 @@ The key separation is **game data versus live media**. A vote, role, timer, and 
 
 ### Browser and identity
 
-The browser creates a random guest secret with Web Crypto and stores it in local storage. Convex stores its SHA-256 hash on the player record. Each query or mutation sends the secret so the server can find that player's seat and decide what they may see or do. This is a **guest-session credential**, not a user account. Anyone who obtains that secret can act as that guest, so it is never used as a room invitation and should not be shared. The six-character room code only finds the room.
+The browser creates a random guest secret with Web Crypto and stores it in local storage. The player must first redeem a one-time invitation. Convex stores a SHA-256 hash of the invitation code, then binds the claimed invitation to the guest secret's hash. Convex also stores that session hash on each player record. Each game query or mutation sends the secret so the server can verify both admission and the player's seat. This is a **guest-session credential**, not verified email identity. Anyone who obtains that secret can act as that guest. The six-character room code only finds the room; an admitted guest still needs the code to join it.
 
-The browser calls Convex mutations for actions such as readying up, submitting a choice, and starting the game. It subscribes to a personalized query for display. A heartbeat updates `lastSeen` for lobby presence; actual call connectivity is tracked by the LiveKit component. Automatic spoken cues use the browser's speech synthesis after the call has connected. In volunteer mode, a non-playing moderator speaks and advances phases instead.
+The browser calls Convex mutations for actions such as readying up, submitting a choice, and starting the game. It subscribes to a personalized query for display. A heartbeat updates `lastSeen` for lobby presence; actual call connectivity is tracked by the LiveKit component. Automatic spoken cues use the browser's speech synthesis after the call has connected. In volunteer mode, a non-playing moderator speaks and advances phases instead. An administrator issues or revokes invitations through internal Convex functions from the CLI; the browser cannot call those functions.
 
 ### Convex: storage, rules, and timing
 
@@ -77,26 +77,27 @@ This illustrates two separate realtime paths: **Convex subscriptions** update th
 ```mermaid
 flowchart TD
     A["Open site on Vercel"] --> B["Browser saves a random guest secret"]
-    B --> C["Create room or join by invitation code"]
-    C --> D["Convex saves the seat and streams lobby state"]
-    D --> E["Join table call: Convex checks access and issues a LiveKit token"]
-    E --> F["Players ready up; organizer or moderator starts"]
-    F --> G["Convex deals roles and returns each player only their own role"]
-    G --> H{"Narration mode"}
-    H -->|Automatic| I["Browser speaks cues; Convex schedules phase deadlines"]
-    H -->|Volunteer| J["Moderator speaks cues and advances phases manually"]
-    I --> K["Night: Mafia discuss privately, then Detective and Doctor act"]
-    J --> K
-    K --> L["Dawn: Convex resolves kill, protection, and investigation"]
-    L --> M["Day: players discuss in the shared LiveKit call"]
-    M --> N["Secret vote: Convex tallies and checks for a winner"]
-    N -->|No winner| K
-    N -->|Winner| O["Reveal all roles and offer a rematch"]
+    B --> C["Redeem a one-time site invitation"]
+    C --> D["Create room or join by room code"]
+    D --> E["Convex saves the seat and streams lobby state"]
+    E --> F["Join table call: Convex checks access and issues a LiveKit token"]
+    F --> G["Players ready up; organizer or moderator starts"]
+    G --> H["Convex deals roles and returns each player only their own role"]
+    H --> I{"Narration mode"}
+    I -->|Automatic| J["Browser speaks cues; Convex schedules phase deadlines"]
+    I -->|Volunteer| K["Moderator speaks cues and advances phases manually"]
+    J --> L["Night: Mafia discuss privately, then Detective and Doctor act"]
+    K --> L
+    L --> M["Dawn: Convex resolves kill, protection, and investigation"]
+    M --> N["Day: players discuss in the shared LiveKit call"]
+    N --> O["Secret vote: Convex tallies and checks for a winner"]
+    O -->|No winner| L
+    O -->|Winner| P["Reveal all roles and offer a rematch"]
 ```
 
 ### 1. Create or join
 
-The browser generates a guest secret and stores it with the seat in local storage. The room code is an invitation, not an identity credential. Convex stores a hash of the guest secret and uses it to recognize the same player on reconnect. It keeps the room and player records in its database.
+The browser generates a guest secret and stores it with the seat in local storage. The visitor redeems a separate one-time site invitation first. The room code identifies a specific room; it is not an identity credential. Convex stores a hash of the guest secret and uses it to recognize the same invited player on reconnect. It keeps the invitation, room, and player records in its database.
 
 ### 2. Gather in the lobby
 
@@ -125,6 +126,7 @@ Refreshing the page preserves the player's seat through the locally saved guest 
 - [`components/mafia-app.tsx`](../components/mafia-app.tsx): browser session, lobby, game screens, and Convex subscriptions.
 - [`components/media-stage.tsx`](../components/media-stage.tsx) and [`components/moderator-channel.tsx`](../components/moderator-channel.tsx): LiveKit calls and controls.
 - [`convex/games.ts`](../convex/games.ts): authoritative game actions, per-player state, phase transitions, and scheduling.
+- [`convex/invitations.ts`](../convex/invitations.ts): one-time invite redemption, admission status, admin issue, and revocation.
 - [`convex/media.ts`](../convex/media.ts): LiveKit token grants and old-room cleanup.
 - [`convex/lib/rules.ts`](../convex/lib/rules.ts): role decks, action resolution, voting, and victory rules.
 - [`convex/schema.ts`](../convex/schema.ts): `games`, `players`, `choices`, `investigations`, and `events` tables.

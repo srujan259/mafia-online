@@ -1,15 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 const secret = (n: number) => n.toString(16).padStart(64, "0");
+async function admit(t: ReturnType<typeof convexTest>, n: number) {
+  const code = n.toString(16).padStart(32, "0");
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const invitationId = await t.mutation(internal.invitations.issue, { codeHash, label: `Guest ${n}` });
+  await t.mutation(api.invitations.redeem, { secret: secret(n), code });
+  return invitationId;
+}
 afterEach(() => vi.unstubAllEnvs());
 
 describe("rooms and private game state", () => {
+  it("admits one guest per invite and revocation immediately removes access", async () => {
+    const t = convexTest(schema, modules);
+    const invitationId = await admit(t, 1);
+    expect(await t.query(api.invitations.status, { secret: secret(1) })).toBe(true);
+    await expect(t.mutation(api.invitations.redeem, { secret: secret(2), code: "1".padStart(32, "0") })).rejects.toThrow(/already been used/i);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Private room", secret: secret(1) });
+    await expect(t.mutation(api.games.join, { name: "Uninvited", code: room.code, secret: secret(2) })).rejects.toThrow(/invitation/i);
+    await t.mutation(internal.invitations.revoke, { invitationId });
+    expect(await t.query(api.invitations.status, { secret: secret(1) })).toBe(false);
+    await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).rejects.toThrow(/invitation/i);
+  });
   it("keeps a reconnecting guest in the same seat and rejects another secret", async () => {
     const t = convexTest(schema, modules);
+    await expect(t.mutation(api.games.create, { name: "Host", title: "Friday Mafia", secret: secret(1) })).rejects.toThrow(/invitation/i);
+    await admit(t, 1);
     const room = await t.mutation(api.games.create, { name: "Host", title: "Friday Mafia", secret: secret(1) });
     const first = await t.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
     const restored = await t.mutation(api.games.join, { name: "Host renamed", code: room.code, secret: secret(1) });
@@ -20,6 +41,7 @@ describe("rooms and private game state", () => {
   });
   it("never includes another player's role or investigation in their private view", async () => {
     const t = convexTest(schema, modules);
+    await admit(t, 1); await admit(t, 2);
     const room = await t.mutation(api.games.create, { name: "Host", title: "Friday Mafia", secret: secret(1) });
     await t.mutation(api.games.join, { name: "Friend", code: room.code, secret: secret(2) });
     const host = await t.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
@@ -41,6 +63,7 @@ describe("rooms and private game state", () => {
   });
   it("rejects forged night choices and stale phase actions", async () => {
     const t = convexTest(schema, modules);
+    await admit(t, 1); await admit(t, 2);
     const room = await t.mutation(api.games.create, { name: "Host", title: "Friday Mafia", secret: secret(1) });
     await t.mutation(api.games.join, { name: "Friend", code: room.code, secret: secret(2) });
     const host = await t.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
@@ -59,6 +82,7 @@ describe("rooms and private game state", () => {
   it("runs each narrated night turn, blocks out-of-turn actions, and reaches victory", async () => {
     vi.stubEnv("ALLOW_NO_MEDIA", "true");
     const t = convexTest(schema, modules);
+    for (let i = 1; i <= 6; i++) await admit(t, i);
     const seats: { gameId: Awaited<ReturnType<typeof t.mutation<typeof api.games.create>>>["gameId"]; secret: string }[] = [];
     const room = await t.mutation(api.games.create, { name: "Player 1", title: "Full game", secret: secret(1) });
     seats.push({ gameId: room.gameId, secret: secret(1) });
@@ -133,6 +157,7 @@ describe("rooms and private game state", () => {
   it("lets a non-playing volunteer moderate the phases without hearing Mafia's private call", async () => {
     vi.stubEnv("ALLOW_NO_MEDIA", "true");
     const t = convexTest(schema, modules);
+    for (let i = 1; i <= 7; i++) await admit(t, i);
     const room = await t.mutation(api.games.create, { name: "Organizer", title: "Hosted game", secret: secret(1) });
     const organizer = { gameId: room.gameId, secret: secret(1) };
     const moderator = { gameId: room.gameId, secret: secret(2) };

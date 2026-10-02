@@ -7,8 +7,14 @@ export async function sessionHash(secret: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
 }
-export async function authorize(ctx: QueryCtx | MutationCtx, gameId: Id<"games">, secret: string) {
+export async function requireInvitation(ctx: QueryCtx | MutationCtx, secret: string) {
   const hash = await sessionHash(secret);
+  const invitations = await ctx.db.query("invitations").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
+  if (!invitations.some(invitation => invitation.revokedAt === undefined)) throw new ConvexError("An invitation is required to play.");
+  return hash;
+}
+export async function authorize(ctx: QueryCtx | MutationCtx, gameId: Id<"games">, secret: string) {
+  const hash = await requireInvitation(ctx, secret);
   const player = await ctx.db.query("players").withIndex("by_session", q => q.eq("sessionHash", hash)).filter(q => q.eq(q.field("gameId"), gameId)).first();
   const game = await ctx.db.get(gameId);
   if (!game || !player) throw new ConvexError("This seat is not available. Join the room again.");

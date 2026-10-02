@@ -9,6 +9,7 @@
  */
 
 import type * as games from "../games.js";
+import type * as invitations from "../invitations.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_rules from "../lib/rules.js";
 import type * as media from "../media.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   games: typeof games;
+  invitations: typeof invitations;
   "lib/auth": typeof lib_auth;
   "lib/rules": typeof lib_rules;
   media: typeof media;

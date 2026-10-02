@@ -40,6 +40,7 @@ function Session() {
   const [seat, setSeat] = useState<Seat | null>(null);
   const [saved, setSaved] = useState<Seat | null>(null);
   const [storageError, setStorageError] = useState(false);
+  const admitted = useQuery(api.invitations.status, secret ? { secret } : "skip");
   useEffect(() => {
     try {
       let value = localStorage.getItem("mafia-guest");
@@ -53,8 +54,26 @@ function Session() {
     } catch { setStorageError(true); }
   }, []);
   function enter(s: Seat) { localStorage.setItem("mafia-seat", JSON.stringify(s)); setSaved(s); setSeat(s); }
+  if (storageError) return <div className="center-page"><Brand /><h1>Browser storage is needed.</h1><p>Enable site storage, then reload to keep your private seat.</p></div>;
+  if (admitted === undefined) return <div className="center-page"><Brand /><Hourglass /><p>Checking your invitation…</p></div>;
+  if (!admitted) return <InviteGate secret={secret} />;
   if (seat && secret) return <RoomBoundary onExit={() => setSeat(null)}><GameRoom secret={secret} seat={seat} onExit={() => setSeat(null)} /></RoomBoundary>;
   return <Landing configured secret={secret} onEnter={enter} saved={saved} onResume={() => saved && setSeat(saved)} storageError={storageError} />;
+}
+
+function InviteGate({ secret }: { secret: string }) {
+  const redeem = useMutation(api.invitations.redeem);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); setError("");
+    try { await redeem({ secret, code }); }
+    catch (cause) { setError(message(cause)); }
+    finally { setBusy(false); }
+  }
+  return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Your invitation awaits.</h1><p className="muted">Enter the one-time invitation code shared with you. You’ll still need a room code to join a friend’s game.</p><form onSubmit={submit}><label>Invitation code<input autoComplete="off" autoCapitalize="characters" spellCheck={false} placeholder="Paste your invitation code" value={code} onChange={event => setCode(event.target.value)} /></label><button className="primary full" type="submit" disabled={busy || !code.trim()}>{busy ? "Checking invitation…" : "Enter the game"} <ArrowRight size={17} /></button></form>{error && <p className="error" role="alert">{error}</p>}<p className="muted small invite-note">An invitation admits this browser once. Keep its site data to keep access.</p></div></div>;
 }
 
 function Landing({ configured, secret = "", onEnter, saved, onResume, storageError }: { configured: boolean; secret?: string; onEnter?: (s: Seat) => void; saved?: Seat | null; onResume?: () => void; storageError?: boolean }) {
@@ -84,7 +103,7 @@ function Landing({ configured, secret = "", onEnter, saved, onResume, storageErr
         {configured ? <EnterButton secret={secret} name={name} title={title} code={code} mode={mode} onEnter={onEnter!} /> : <><button className="primary full" disabled>Room setup pending <ArrowRight size={17} /></button><p className="setup-note">Connect the Convex deployment to enable rooms. The setup steps are in the project README.</p></>}
         {storageError && <p className="error" role="alert">Browser storage is unavailable. Enable site storage to keep your seat when reconnecting.</p>}
         {saved && <button className="resume full" onClick={onResume}>Return to {saved.code} as {saved.name} <ArrowRight size={15} /></button>}
-        <div className="entry-footer"><LockKeyhole size={15} /><span>Private rooms. No account needed.<br />Your invitation link is all your friends need.</span></div>
+        <div className="entry-footer"><LockKeyhole size={15} /><span>Private rooms. No account needed.<br />Friends need a site invitation and your room code.</span></div>
       </section>
     </main>
     <section className="how-section" id="how-it-works"><div className="eyebrow">A familiar game. A new table.</div><div className="how-grid"><article><span>01</span><h3>Keep a secret.</h3><p>Get your private role. Your friends might be your teammates—or your next suspects.</p></article><article><span>02</span><h3>Make your case.</h3><p>Talk face to face. Bluff, accuse, defend. At night, special roles act in private.</p></article><article><span>03</span><h3>Trust your gut.</h3><p>Vote together. Keep playing until the town catches every Mafia, or the Mafia takes over.</p></article></div></section>

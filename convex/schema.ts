@@ -6,6 +6,10 @@ export const role = v.union(v.literal("mafia"), v.literal("doctor"), v.literal("
 export const nightStage = v.union(v.literal("mafia"), v.literal("detective"), v.literal("doctor"));
 export const narrationMode = v.union(v.literal("automatic"), v.literal("volunteer"));
 export default defineSchema({
+  invitations: defineTable({
+    codeHash: v.string(), label: v.string(), createdAt: v.number(), expiresAt: v.number(),
+    claimedBy: v.optional(v.string()), claimedAt: v.optional(v.number()), revokedAt: v.optional(v.number()),
+  }).index("by_code_hash", ["codeHash"]).index("by_claimed_by", ["claimedBy"]),
   games: defineTable({
     code: v.string(), title: v.string(), hostId: v.optional(v.id("players")), phase,
     round: v.number(), epoch: v.number(), deadline: v.optional(v.number()),

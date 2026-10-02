@@ -3,7 +3,7 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { authorize, cleanName, sessionHash } from "./lib/auth";
+import { authorize, cleanName, requireInvitation } from "./lib/auth";
 import { canChoose, mediaAccess, nightStageSeconds, resolveNight, resolveVote, roleDeck, winner, type NightStage, type Phase } from "./lib/rules";
 import { narrationMode } from "./schema";
 
@@ -21,7 +21,7 @@ async function transition(ctx: MutationCtx, game: Doc<"games">, nextPhase: Phase
 export const create = mutation({
   args: { secret: v.string(), name: v.string(), title: v.string() },
   handler: async (ctx, args) => {
-    const hash = await sessionHash(args.secret);
+    const hash = await requireInvitation(ctx, args.secret);
     const recent = await ctx.db.query("players").withIndex("by_session", q => q.eq("sessionHash", hash)).collect();
     if (recent.filter(p => p.joinedAt > Date.now() - 60_000).length >= 5) throw new ConvexError("Please wait a minute before opening another room.");
     const name = cleanName(args.name); const title = cleanName(args.title, 40);
@@ -42,10 +42,10 @@ export const create = mutation({
 export const join = mutation({
   args: { code: v.string(), name: v.string(), secret: v.string() },
   handler: async (ctx, args) => {
-    const hash = await sessionHash(args.secret);
+    const hash = await requireInvitation(ctx, args.secret);
     const code = args.code.trim().toUpperCase();
     const game = await ctx.db.query("games").withIndex("by_code", q => q.eq("code", code)).first();
-    if (!game) throw new ConvexError("That room wasn’t found. Check the invitation code.");
+    if (!game) throw new ConvexError("That room wasn’t found. Check the room code.");
     const players = await playersIn(ctx, game._id);
     const existing = players.find(p => p.sessionHash === hash);
     if (existing) { await ctx.db.patch(existing._id, { lastSeen: Date.now() }); return { gameId: game._id, code }; }
