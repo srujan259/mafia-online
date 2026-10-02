@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.convex/
+.env*
+!.env.example
+*.tsbuildinfo
+coverage/
+.DS_Store
+.vercel/
+.mafia-test-seats.json
