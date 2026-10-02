@@ -75,15 +75,21 @@ function AuthKitSession() {
     let issuer = "unavailable";
     let audience = "unavailable";
     let application = "unavailable";
+    let tokenHeader = "unavailable";
+    let tokenLifetime = "unavailable";
     if (accessToken) {
       try {
-        const claims = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { iss?: unknown; aud?: unknown; client_id?: unknown };
+        const [encodedHeader, encodedClaims] = accessToken.split(".");
+        const header = JSON.parse(atob(encodedHeader.replace(/-/g, "+").replace(/_/g, "/"))) as { alg?: unknown; kid?: unknown; typ?: unknown };
+        const claims = JSON.parse(atob(encodedClaims.replace(/-/g, "+").replace(/_/g, "/"))) as { iss?: unknown; aud?: unknown; client_id?: unknown; sub?: unknown; exp?: unknown };
         issuer = typeof claims.iss === "string" ? claims.iss : "missing";
         audience = typeof claims.aud === "string" ? claims.aud : Array.isArray(claims.aud) ? claims.aud.join(", ") : "missing";
         application = typeof claims.client_id === "string" ? claims.client_id : "missing";
-      } catch { issuer = "unreadable"; audience = "unreadable"; application = "unreadable"; }
+        tokenHeader = `${typeof header.alg === "string" ? header.alg : "no algorithm"}/${typeof header.typ === "string" ? header.typ : "no type"}/${typeof header.kid === "string" ? "key present" : "no key"}`;
+        tokenLifetime = `${typeof claims.sub === "string" ? "subject present" : "no subject"}/${typeof claims.exp === "number" ? claims.exp > Date.now() / 1000 ? "not expired" : "expired" : "no expiry"}`;
+      } catch { issuer = "unreadable"; audience = "unreadable"; application = "unreadable"; tokenHeader = "unreadable"; tokenLifetime = "unreadable"; }
     }
-    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: WorkOS {loading ? "loading" : "ready"}; token {tokenError ? "request failed" : accessToken ? "available" : tokenLoading ? "loading" : "missing"}; issuer {issuer}; application {application}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}; game verification {isLoading ? "pending" : "rejected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
+    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: WorkOS {loading ? "loading" : "ready"}; token {tokenError ? "request failed" : accessToken ? "available" : tokenLoading ? "loading" : "missing"}; header {tokenHeader}; lifetime {tokenLifetime}; issuer {issuer}; application {application}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}; game verification {isLoading ? "pending" : "rejected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
   }
   return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
 }
