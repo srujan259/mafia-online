@@ -1,6 +1,6 @@
 # Mafia Online
 
-A private, browser-based Mafia game for 6–12 playing friends, with live video and voice. Convex runs the game and keeps roles and votes private; LiveKit handles calls. Choose an automatic narrator or a volunteer moderator who sits out, speaks the cues, and controls when scenes change. Only living Mafia can join their private video room during their turn. Everyone returns to the table for daytime discussion. The rules and product scope are in [the plan](docs/PLAN.md).
+A private, browser-based Mafia game for 6–12 playing friends, with live video and voice. Convex runs the game and keeps roles and votes private; LiveKit handles calls. Choose an automatic narrator or a volunteer moderator who sits out, speaks the cues, and controls when scenes change. Only living Mafia can join their private video room during their turn. Everyone returns to the table for daytime discussion. See the [technical user journey](docs/SYSTEM_DESIGN.md) and [product plan](docs/PLAN.md).
 
 ## Play locally
 
