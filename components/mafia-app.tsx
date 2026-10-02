@@ -56,7 +56,7 @@ function AuthKitSession() {
   const { user, loading, signOut } = useAuth();
   const { isLoading, isAuthenticated } = useConvexAuth();
   if (loading || isLoading) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
-  if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Welcome back.</h1><p className="muted">Sign in with the email address that was invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
+  if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Sign in to play.</h1><p className="muted">Use the email address invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
   if (!isAuthenticated) return <div className="center-page"><Brand /><h1>Unable to verify your account.</h1><p>Check that WorkOS and this game use the same Convex deployment.</p><button className="text-link" onClick={() => void signOut()}>Sign out</button></div>;
   return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
 }
