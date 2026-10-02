@@ -34,8 +34,7 @@ function RoleIcon({ role, size = 22 }: { role?: Role; size?: number }) {
 
 export function MafiaApp({ authkitConfigured = false }: { authkitConfigured?: boolean }) {
   if (!client) return <Landing configured={false} />;
-  if (authkitConfigured) return <AuthKitProvider><ConvexProviderWithAuth client={client} useAuth={useAuthFromAuthKit}><ModeGate authkitConfigured /></ConvexProviderWithAuth></AuthKitProvider>;
-  return <ConvexProvider client={client}><ModeGate authkitConfigured={false} /></ConvexProvider>;
+  return <ConvexProvider client={client}><ModeGate authkitConfigured={authkitConfigured} /></ConvexProvider>;
 }
 function useAuthFromAuthKit() {
   const { user, loading: isLoading } = useAuth();
@@ -48,9 +47,11 @@ function useAuthFromAuthKit() {
 }
 function ModeGate({ authkitConfigured }: { authkitConfigured: boolean }) {
   const mode = useQuery(api.auth.mode);
-  if (!mode) return <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const timer = window.setTimeout(() => setSlow(true), 10000); return () => window.clearTimeout(timer); }, []);
+  if (!mode) return slow ? <div className="center-page"><Brand /><h1>Can’t reach the game server.</h1><p>Check your connection, then try again.</p><button className="primary" onClick={() => window.location.reload()}>Retry connection</button></div> : <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
   if (mode === "authkit" && !authkitConfigured) return <div className="center-page"><Brand /><h1>Sign-in setup is incomplete.</h1><p>Connect WorkOS to this site before joining a room.</p></div>;
-  return mode === "authkit" ? <AuthKitSession /> : <Session />;
+  return mode === "authkit" ? <AuthKitProvider><ConvexProviderWithAuth client={client!} useAuth={useAuthFromAuthKit}><AuthKitSession /></ConvexProviderWithAuth></AuthKitProvider> : <Session />;
 }
 function AuthKitSession() {
   const { user, loading, signOut } = useAuth();
