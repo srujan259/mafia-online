@@ -3,6 +3,7 @@ import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk"
 import { ConvexError, v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { authkitRequired } from "./lib/auth";
 
 function config() {
   const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
@@ -11,7 +12,9 @@ function config() {
 export const token = action({
   args: { gameId: v.id("games"), secret: v.string(), epoch: v.number() },
   handler: async (ctx, args): Promise<{ token: string; url: string; epoch: number } | { unavailable: true } | null> => {
-    const grant = await ctx.runQuery(internal.games.mediaGrant, { gameId: args.gameId, secret: args.secret });
+    const identity = authkitRequired() ? await ctx.auth.getUserIdentity() : null;
+    if (authkitRequired() && !identity) throw new ConvexError("Sign in to use the call.");
+    const grant = await ctx.runQuery(internal.games.mediaGrant, { gameId: args.gameId, secret: args.secret, trustedSubject: identity?.subject });
     if (!grant || grant.epoch !== args.epoch) return null;
     const settings = config();
     if (!settings) return { unavailable: true };
@@ -24,7 +27,9 @@ export const token = action({
 export const moderatorToken = action({
   args: { gameId: v.id("games"), secret: v.string(), round: v.number() },
   handler: async (ctx, args): Promise<{ token: string; url: string; round: number } | { unavailable: true } | null> => {
-    const grant = await ctx.runQuery(internal.games.moderatorGrant, { gameId: args.gameId, secret: args.secret });
+    const identity = authkitRequired() ? await ctx.auth.getUserIdentity() : null;
+    if (authkitRequired() && !identity) throw new ConvexError("Sign in to use the call.");
+    const grant = await ctx.runQuery(internal.games.moderatorGrant, { gameId: args.gameId, secret: args.secret, trustedSubject: identity?.subject });
     if (!grant || grant.round !== args.round) return null;
     const settings = config();
     if (!settings) return { unavailable: true };

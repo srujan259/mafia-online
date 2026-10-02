@@ -2,12 +2,19 @@ import { ConvexError } from "convex/values";
 import type { QueryCtx, MutationCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
+export const authkitRequired = () => process.env.AUTHKIT_AUTH_REQUIRED === "true";
+
 export async function sessionHash(secret: string) {
   if (!/^[a-f0-9]{64}$/.test(secret)) throw new ConvexError("Invalid guest session. Please reload.");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
 }
 export async function requireInvitation(ctx: QueryCtx | MutationCtx, secret: string) {
+  if (authkitRequired()) {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Sign in to play.");
+    return `workos:${identity.subject}`;
+  }
   const hash = await sessionHash(secret);
   if (!await hasInvitation(ctx, hash)) throw new ConvexError("An invitation is required to play.");
   return hash;
@@ -22,8 +29,10 @@ export async function hasInvitation(ctx: QueryCtx | MutationCtx, hash: string) {
   }
   return false;
 }
-export async function authorize(ctx: QueryCtx | MutationCtx, gameId: Id<"games">, secret: string) {
-  const hash = await requireInvitation(ctx, secret);
+export async function authorize(ctx: QueryCtx | MutationCtx, gameId: Id<"games">, secret: string, trustedSubject?: string) {
+  const hash = authkitRequired() && trustedSubject
+    ? `workos:${trustedSubject}`
+    : await requireInvitation(ctx, secret);
   const player = await ctx.db.query("players").withIndex("by_session", q => q.eq("sessionHash", hash)).filter(q => q.eq(q.field("gameId"), gameId)).first();
   const game = await ctx.db.get(gameId);
   if (!game || !player) throw new ConvexError("This seat is not available. Join the room again.");

@@ -1,7 +1,8 @@
 "use client";
 
-import { Component, useEffect, useState, type ReactNode } from "react";
-import { ConvexProvider, ConvexReactClient, useMutation, useQuery, useConvexConnectionState } from "convex/react";
+import { Component, useCallback, useEffect, useState, type ReactNode } from "react";
+import { AuthKitProvider, useAccessToken, useAuth } from "@workos-inc/authkit-nextjs/components";
+import { ConvexProvider, ConvexProviderWithAuth, ConvexReactClient, useMutation, useQuery, useConvexAuth, useConvexConnectionState } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ArrowRight, Check, CheckCheck, ChevronLeft, Copy, Crown, Eye, EyeOff, Fingerprint, HeartPulse, Hourglass, LockKeyhole, LogOut, Mic, Moon, Radio, Search, ShieldCheck, Skull, Sparkles, Sunrise, Users, VenetianMask, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -31,16 +32,41 @@ function RoleIcon({ role, size = 22 }: { role?: Role; size?: number }) {
   return <Icon size={size} />;
 }
 
-export function MafiaApp() {
+export function MafiaApp({ authkitConfigured = false }: { authkitConfigured?: boolean }) {
   if (!client) return <Landing configured={false} />;
-  return <ConvexProvider client={client}><Session /></ConvexProvider>;
+  if (authkitConfigured) return <AuthKitProvider><ConvexProviderWithAuth client={client} useAuth={useAuthFromAuthKit}><ModeGate authkitConfigured /></ConvexProviderWithAuth></AuthKitProvider>;
+  return <ConvexProvider client={client}><ModeGate authkitConfigured={false} /></ConvexProvider>;
 }
-function Session() {
+function useAuthFromAuthKit() {
+  const { user, loading: isLoading } = useAuth();
+  const { getAccessToken, refresh } = useAccessToken();
+  const fetchAccessToken = useCallback(async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
+    if (!user) return null;
+    return (forceRefreshToken ? await refresh() : await getAccessToken()) ?? null;
+  }, [user, refresh, getAccessToken]);
+  return { isLoading, isAuthenticated: !!user, fetchAccessToken };
+}
+function ModeGate({ authkitConfigured }: { authkitConfigured: boolean }) {
+  const mode = useQuery(api.auth.mode);
+  if (!mode) return <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
+  if (mode === "authkit" && !authkitConfigured) return <div className="center-page"><Brand /><h1>Sign-in setup is incomplete.</h1><p>Connect WorkOS to this site before joining a room.</p></div>;
+  return mode === "authkit" ? <AuthKitSession /> : <Session />;
+}
+function AuthKitSession() {
+  const { user, loading, signOut } = useAuth();
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  if (loading || isLoading) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
+  if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Welcome back.</h1><p className="muted">Sign in with the email address that was invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
+  if (!isAuthenticated) return <div className="center-page"><Brand /><h1>Unable to verify your account.</h1><p>Check that WorkOS and this game use the same Convex deployment.</p><button className="text-link" onClick={() => void signOut()}>Sign out</button></div>;
+  return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
+}
+function Session({ accountMode = false, seatStorageKey = "mafia-seat" }: { accountMode?: boolean; seatStorageKey?: string }) {
   const [secret, setSecret] = useState("");
   const [seat, setSeat] = useState<Seat | null>(null);
   const [saved, setSaved] = useState<Seat | null>(null);
   const [storageError, setStorageError] = useState(false);
-  const admitted = useQuery(api.invitations.status, secret ? { secret } : "skip");
+  const invitationStatus = useQuery(api.invitations.status, !accountMode && secret ? { secret } : "skip");
+  const admitted = accountMode ? true : invitationStatus;
   useEffect(() => {
     try {
       let value = localStorage.getItem("mafia-guest");
@@ -49,16 +75,16 @@ function Session() {
         localStorage.setItem("mafia-guest", value);
       }
       setSecret(value);
-      const previous = localStorage.getItem("mafia-seat");
+      const previous = localStorage.getItem(seatStorageKey);
       if (previous) { const p = JSON.parse(previous); if (typeof p.gameId === "string" && /^[A-Z2-9]{6}$/.test(p.code) && typeof p.name === "string") setSaved(p); }
     } catch { setStorageError(true); }
-  }, []);
-  function enter(s: Seat) { localStorage.setItem("mafia-seat", JSON.stringify(s)); setSaved(s); setSeat(s); }
+  }, [seatStorageKey]);
+  function enter(s: Seat) { localStorage.setItem(seatStorageKey, JSON.stringify(s)); setSaved(s); setSeat(s); }
   if (storageError) return <div className="center-page"><Brand /><h1>Browser storage is needed.</h1><p>Enable site storage, then reload to keep your private seat.</p></div>;
-  if (admitted === undefined) return <div className="center-page"><Brand /><Hourglass /><p>Checking your invitation…</p></div>;
+  if (!secret || admitted === undefined) return <div className="center-page"><Brand /><Hourglass /><p>{accountMode ? "Preparing your table…" : "Checking your invitation…"}</p></div>;
   if (!admitted) return <InviteGate secret={secret} />;
   if (seat && secret) return <RoomBoundary onExit={() => setSeat(null)}><GameRoom secret={secret} seat={seat} onExit={() => setSeat(null)} /></RoomBoundary>;
-  return <Landing configured secret={secret} onEnter={enter} saved={saved} onResume={() => saved && setSeat(saved)} storageError={storageError} />;
+  return <Landing configured accountMode={accountMode} secret={secret} onEnter={enter} saved={saved} onResume={() => saved && setSeat(saved)} storageError={storageError} />;
 }
 
 function InviteGate({ secret }: { secret: string }) {
@@ -76,13 +102,13 @@ function InviteGate({ secret }: { secret: string }) {
   return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Your invitation awaits.</h1><p className="muted">Enter the invitation code shared with you. You’ll still need a room code to join a friend’s game.</p><form onSubmit={submit}><label>Invitation code<input autoComplete="off" autoCapitalize="characters" spellCheck={false} placeholder="Paste your invitation code" value={code} onChange={event => setCode(event.target.value)} /></label><button className="primary full" type="submit" disabled={busy || !code.trim()}>{busy ? "Checking invitation…" : "Enter the game"} <ArrowRight size={17} /></button></form>{error && <p className="error" role="alert">{error}</p>}<p className="muted small invite-note">Your invitation stays linked to this browser. Keep its site data to keep access.</p></div></div>;
 }
 
-function Landing({ configured, secret = "", onEnter, saved, onResume, storageError }: { configured: boolean; secret?: string; onEnter?: (s: Seat) => void; saved?: Seat | null; onResume?: () => void; storageError?: boolean }) {
+function Landing({ configured, accountMode = false, secret = "", onEnter, saved, onResume, storageError }: { configured: boolean; accountMode?: boolean; secret?: string; onEnter?: (s: Seat) => void; saved?: Seat | null; onResume?: () => void; storageError?: boolean }) {
   const [mode, setMode] = useState<"create" | "join">("create");
   const [name, setName] = useState(""); const [code, setCode] = useState("");
   const [title, setTitle] = useState("The usual suspects");
   useEffect(() => { const invited = new URLSearchParams(window.location.search).get("room"); if (invited) { setCode(invited.toUpperCase().slice(0, 6)); setMode("join"); } }, []);
   return <div className="site-shell">
-    <header className="site-header"><Brand /><span className="quiet"><span className="status-dot" /> Your people. Your table.</span><a href="#how-it-works" className="text-link">How to play <ArrowRight size={15} /></a></header>
+    <header className="site-header"><Brand /><span className="quiet"><span className="status-dot" /> Your people. Your table.</span><a href="#how-it-works" className="text-link">How to play <ArrowRight size={15} /></a>{accountMode && <AccountButton />}</header>
     <main className="landing">
       <section className="hero">
         <span className="eyebrow"><span className="tiny-line" /> Game night, from anywhere</span>
@@ -103,12 +129,16 @@ function Landing({ configured, secret = "", onEnter, saved, onResume, storageErr
         {configured ? <EnterButton secret={secret} name={name} title={title} code={code} mode={mode} onEnter={onEnter!} /> : <><button className="primary full" disabled>Room setup pending <ArrowRight size={17} /></button><p className="setup-note">Connect the Convex deployment to enable rooms. The setup steps are in the project README.</p></>}
         {storageError && <p className="error" role="alert">Browser storage is unavailable. Enable site storage to keep your seat when reconnecting.</p>}
         {saved && <button className="resume full" onClick={onResume}>Return to {saved.code} as {saved.name} <ArrowRight size={15} /></button>}
-        <div className="entry-footer"><LockKeyhole size={15} /><span>Private rooms. No account needed.<br />Friends need a site invitation and your room code.</span></div>
+        <div className="entry-footer"><LockKeyhole size={15} /><span>Private rooms. {accountMode ? "Sign in with an invited email." : "No account needed."}<br />Friends need {accountMode ? "an email invitation" : "a site invitation"} and your room code.</span></div>
       </section>
     </main>
     <section className="how-section" id="how-it-works"><div className="eyebrow">A familiar game. A new table.</div><div className="how-grid"><article><span>01</span><h3>Keep a secret.</h3><p>Get your private role. Your friends might be your teammates—or your next suspects.</p></article><article><span>02</span><h3>Make your case.</h3><p>Talk face to face. Bluff, accuse, defend. At night, special roles act in private.</p></article><article><span>03</span><h3>Trust your gut.</h3><p>Vote together. Keep playing until the town catches every Mafia, or the Mafia takes over.</p></article></div></section>
     <footer className="site-footer"><span>MAFIA — an evening well suspected.</span><span>Built for friends, wherever they are.</span></footer>
   </div>;
+}
+function AccountButton() {
+  const { user, signOut } = useAuth();
+  return <button className="text-link" title={user?.email} onClick={() => void signOut()}>Sign out <LogOut size={15} /></button>;
 }
 function EnterButton({ secret, name, title, code, mode, onEnter }: { secret: string; name: string; title: string; code: string; mode: string; onEnter: (s: Seat) => void }) {
   const create = useMutation(api.games.create), join = useMutation(api.games.join);

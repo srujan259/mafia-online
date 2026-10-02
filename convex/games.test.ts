@@ -16,8 +16,28 @@ async function admit(t: ReturnType<typeof convexTest>, n: number) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("rooms and private game state", () => {
+  it("uses the verified WorkOS account across devices and rejects guest secrets", async () => {
+    vi.stubEnv("AUTHKIT_AUTH_REQUIRED", "true");
+    const t = convexTest(schema, modules);
+    expect(await t.query(api.auth.mode)).toBe("authkit");
+    await admit(t, 1);
+    await expect(t.mutation(api.games.create, { name: "Guest", title: "Blocked", secret: secret(1) })).rejects.toThrow(/sign in/i);
+    const host = t.withIdentity({ subject: "user_host" });
+    const friend = t.withIdentity({ subject: "user_friend" });
+    const room = await host.mutation(api.games.create, { name: "Host", title: "WorkOS game", secret: secret(1) });
+    const first = await host.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
+    await host.mutation(api.games.join, { name: "Another browser", code: room.code, secret: secret(99) });
+    const returned = await host.query(api.games.state, { gameId: room.gameId, secret: secret(99) });
+    expect(returned.me.id).toBe(first.me.id);
+    expect(returned.players).toHaveLength(1);
+    await friend.mutation(api.games.join, { name: "Friend", code: room.code, secret: secret(1) });
+    expect((await friend.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).me.id).not.toBe(first.me.id);
+    await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).rejects.toThrow(/sign in/i);
+    await expect(t.action(api.media.token, { gameId: room.gameId, secret: secret(1), epoch: 0 })).rejects.toThrow(/sign in/i);
+  });
   it("admits one guest per invite and revocation immediately removes access", async () => {
     const t = convexTest(schema, modules);
+    expect(await t.query(api.auth.mode)).toBe("guest");
     const invitationId = await admit(t, 1);
     expect(await t.query(api.invitations.status, { secret: secret(1) })).toBe(true);
     await expect(t.mutation(api.invitations.redeem, { secret: secret(2), code: "1".padStart(32, "0") })).rejects.toThrow(/already been used/i);

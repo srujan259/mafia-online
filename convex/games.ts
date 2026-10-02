@@ -237,14 +237,14 @@ export const retryTransition = mutation({ args: credentials, handler: async (ctx
   await ctx.db.patch(game._id, { mediaError: undefined });
   await ctx.scheduler.runAfter(0, internal.media.closeAndAdvance, { gameId: game._id, epoch: game.epoch, oldRoom: game.mediaRoom, attempt: 0 });
 } });
-export const mediaGrant = internalQuery({ args: credentials, handler: async (ctx, args) => {
-  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+export const mediaGrant = internalQuery({ args: { ...credentials, trustedSubject: v.optional(v.string()) }, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret, args.trustedSubject);
   const access = mediaAccess(game.phase, player, game.nightStage, game.narrationMode === "volunteer" && game.narratorId === player._id);
   if (!access || !game.mediaRoom || (game.deadline && Date.now() >= game.deadline)) return null;
   return { room: game.mediaRoom, identity: player._id, name: player.name, publish: access.publish, epoch: game.epoch };
 } });
-export const moderatorGrant = internalQuery({ args: credentials, handler: async (ctx, args) => {
-  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+export const moderatorGrant = internalQuery({ args: { ...credentials, trustedSubject: v.optional(v.string()) }, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret, args.trustedSubject);
   if (game.narrationMode !== "volunteer" || !game.narratorId || !["transition", "reveal", "night", "vote"].includes(game.phase) || game.round < 1) return null;
   return { room: `mafia-${game._id}-${game.round}-moderator`, identity: player._id, name: player.name, publish: player._id === game.narratorId, round: game.round };
 } });
