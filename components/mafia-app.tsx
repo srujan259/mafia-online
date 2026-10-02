@@ -36,7 +36,7 @@ type InitialAuth = ComponentProps<typeof AuthKitProvider>["initialAuth"];
 
 export function MafiaApp({ authkitConfigured = false, initialAuth }: { authkitConfigured?: boolean; initialAuth?: InitialAuth }) {
   if (!client) return <Landing configured={false} />;
-  return <ConvexProvider client={client}><ModeGate authkitConfigured={authkitConfigured} initialAuth={initialAuth} /></ConvexProvider>;
+  return <ModeGate authkitConfigured={authkitConfigured} initialAuth={initialAuth} />;
 }
 function useAuthFromAuthKit() {
   const { user, loading: isLoading } = useAuth();
@@ -48,12 +48,18 @@ function useAuthFromAuthKit() {
   return { isLoading: isLoading || (!!user && !accessToken && tokenLoading), isAuthenticated: !!user && !!accessToken, fetchAccessToken };
 }
 function ModeGate({ authkitConfigured, initialAuth }: { authkitConfigured: boolean; initialAuth?: InitialAuth }) {
-  const mode = useQuery(api.auth.mode);
+  const [mode, setMode] = useState<"authkit" | "guest" | null>(null);
+  const [failed, setFailed] = useState(false);
   const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void client!.query(api.auth.mode).then(result => { if (active) setMode(result); }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => { const timer = window.setTimeout(() => setSlow(true), 10000); return () => window.clearTimeout(timer); }, []);
-  if (!mode) return slow ? <div className="center-page"><Brand /><h1>Can’t reach the game server.</h1><p>Check your connection, then try again.</p><button className="primary" onClick={() => window.location.reload()}>Retry connection</button></div> : <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
+  if (!mode) return failed || slow ? <div className="center-page"><Brand /><h1>Can’t reach the game server.</h1><p>Check your connection, then try again.</p><button className="primary" onClick={() => window.location.reload()}>Retry connection</button></div> : <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
   if (mode === "authkit" && !authkitConfigured) return <div className="center-page"><Brand /><h1>Sign-in setup is incomplete.</h1><p>Connect WorkOS to this site before joining a room.</p></div>;
-  return mode === "authkit" ? <AuthKitProvider initialAuth={initialAuth}><ConvexProviderWithAuth client={client!} useAuth={useAuthFromAuthKit}><AuthKitSession /></ConvexProviderWithAuth></AuthKitProvider> : <Session />;
+  return mode === "authkit" ? <AuthKitProvider initialAuth={initialAuth}><ConvexProviderWithAuth client={client!} useAuth={useAuthFromAuthKit}><AuthKitSession /></ConvexProviderWithAuth></AuthKitProvider> : <ConvexProvider client={client!}><Session /></ConvexProvider>;
 }
 function AuthKitSession() {
   const { user, loading, signOut } = useAuth();
@@ -68,14 +74,16 @@ function AuthKitSession() {
   if (!isAuthenticated || checking) {
     let issuer = "unavailable";
     let audience = "unavailable";
+    let application = "unavailable";
     if (accessToken) {
       try {
-        const claims = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { iss?: unknown; aud?: unknown };
+        const claims = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { iss?: unknown; aud?: unknown; client_id?: unknown };
         issuer = typeof claims.iss === "string" ? claims.iss : "missing";
         audience = typeof claims.aud === "string" ? claims.aud : Array.isArray(claims.aud) ? claims.aud.join(", ") : "missing";
-      } catch { issuer = "unreadable"; audience = "unreadable"; }
+        application = typeof claims.client_id === "string" ? claims.client_id : "missing";
+      } catch { issuer = "unreadable"; audience = "unreadable"; application = "unreadable"; }
     }
-    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: token {tokenError ? "request failed" : accessToken ? "available" : tokenLoading ? "loading" : "missing"}; issuer {issuer}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}; game verification {isLoading ? "pending" : "rejected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
+    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: WorkOS {loading ? "loading" : "ready"}; token {tokenError ? "request failed" : accessToken ? "available" : tokenLoading ? "loading" : "missing"}; issuer {issuer}; application {application}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}; game verification {isLoading ? "pending" : "rejected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
   }
   return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
 }
