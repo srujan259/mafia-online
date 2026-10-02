@@ -60,14 +60,14 @@ sequenceDiagram
     participant S as Convex scheduler
     participant L as LiveKit Cloud
     S->>C: Deadline fires with expected epoch
-    C->>C: Verify phase and epoch; enter transition
-    C-->>B: Subscription updates: changing phase
+    C->>C: Verify phase and epoch and enter transition
+    C-->>B: Subscription reports changing phase
     C->>L: Delete old Mafia media room
     L-->>B: Old call disconnects
     C->>C: Open Detective phase with new epoch
-    C-->>B: Subscription updates: Detective may choose
+    C-->>B: Subscription reports Detective may choose
     B->>C: Detective submits private choice with current epoch
-    C->>C: Validate role and phase; store choice
+    C->>C: Validate role and phase and store choice
 ```
 
 This illustrates two separate realtime paths: **Convex subscriptions** update the game interface, while **LiveKit/WebRTC** handles the call. A phase change affects both, but only Convex determines the next phase and access rights.
