@@ -2,6 +2,7 @@
 
 import { Component, useCallback, useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { AuthKitProvider, useAccessToken, useAuth } from "@workos-inc/authkit-nextjs/components";
+import { ConvexHttpClient } from "convex/browser";
 import { ConvexProvider, ConvexProviderWithAuth, ConvexReactClient, useMutation, useQuery, useConvexAuth, useConvexConnectionState } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ArrowRight, Check, CheckCheck, ChevronLeft, Copy, Crown, Eye, EyeOff, Fingerprint, HeartPulse, Hourglass, LockKeyhole, LogOut, Mic, Moon, Radio, Search, ShieldCheck, Skull, Sparkles, Sunrise, Users, VenetianMask, Volume2, VolumeX, X } from "lucide-react";
@@ -15,6 +16,7 @@ export type GameState = FunctionReturnType<typeof api.games.state>;
 type Seat = { gameId: Id<"games">; code: string; name: string };
 const url = process.env.NEXT_PUBLIC_CONVEX_URL;
 const client = url ? new ConvexReactClient(url) : null;
+const bridgeClient = url ? new ConvexHttpClient(url) : null;
 const roleNames: Record<Role, string> = { mafia: "Mafia", doctor: "Doctor", detective: "Detective", villager: "Villager" };
 const roleDescriptions: Record<Role, string> = {
   mafia: "Blend in by day. Agree with your teammates on one victim each night.",
@@ -43,7 +45,9 @@ function useAuthFromAuthKit() {
   const { accessToken, loading: tokenLoading, getAccessToken, refresh } = useAccessToken();
   const fetchAccessToken = useCallback(async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
     if (!user) return null;
-    return (forceRefreshToken ? await refresh() : await getAccessToken()) ?? null;
+    const workosToken = forceRefreshToken ? await refresh() : await getAccessToken();
+    if (!workosToken || !bridgeClient) return null;
+    return await bridgeClient.action(api.authBridge.exchange, { workosToken });
   }, [user, accessToken, refresh, getAccessToken]);
   return { isLoading: isLoading || (!!user && !accessToken && tokenLoading), isAuthenticated: !!user && !!accessToken, fetchAccessToken };
 }

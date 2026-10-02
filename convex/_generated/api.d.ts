@@ -9,9 +9,11 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as authBridge from "../authBridge.js";
 import type * as games from "../games.js";
 import type * as invitations from "../invitations.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_bridge from "../lib/bridge.js";
 import type * as lib_rules from "../lib/rules.js";
 import type * as media from "../media.js";
 
@@ -23,9 +25,11 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  authBridge: typeof authBridge;
   games: typeof games;
   invitations: typeof invitations;
   "lib/auth": typeof lib_auth;
+  "lib/bridge": typeof lib_bridge;
   "lib/rules": typeof lib_rules;
   media: typeof media;
 }>;
