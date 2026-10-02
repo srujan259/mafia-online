@@ -39,12 +39,12 @@ export function MafiaApp({ authkitConfigured = false }: { authkitConfigured?: bo
 }
 function useAuthFromAuthKit() {
   const { user, loading: isLoading } = useAuth();
-  const { getAccessToken, refresh } = useAccessToken();
+  const { accessToken, loading: tokenLoading, getAccessToken, refresh } = useAccessToken();
   const fetchAccessToken = useCallback(async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
     if (!user) return null;
     return (forceRefreshToken ? await refresh() : await getAccessToken()) ?? null;
-  }, [user, refresh, getAccessToken]);
-  return { isLoading, isAuthenticated: !!user, fetchAccessToken };
+  }, [user, accessToken, refresh, getAccessToken]);
+  return { isLoading: isLoading || (!!user && !accessToken && tokenLoading), isAuthenticated: !!user && !!accessToken, fetchAccessToken };
 }
 function ModeGate({ authkitConfigured }: { authkitConfigured: boolean }) {
   const mode = useQuery(api.auth.mode);
@@ -55,9 +55,22 @@ function ModeGate({ authkitConfigured }: { authkitConfigured: boolean }) {
 function AuthKitSession() {
   const { user, loading, signOut } = useAuth();
   const { isLoading, isAuthenticated } = useConvexAuth();
-  if (loading || isLoading) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
+  const { accessToken, loading: tokenLoading, error: tokenError } = useAccessToken();
+  const connection = useConvexConnectionState();
+  if (loading || isLoading || (user && tokenLoading)) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
   if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Sign in to play.</h1><p className="muted">Use the email address invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
-  if (!isAuthenticated) return <div className="center-page"><Brand /><h1>Unable to verify your account.</h1><p>Check that WorkOS and this game use the same Convex deployment.</p><button className="text-link" onClick={() => void signOut()}>Sign out</button></div>;
+  if (!isAuthenticated) {
+    let issuer = "unavailable";
+    let audience = "unavailable";
+    if (accessToken) {
+      try {
+        const claims = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { iss?: unknown; aud?: unknown };
+        issuer = typeof claims.iss === "string" ? claims.iss : "missing";
+        audience = typeof claims.aud === "string" ? claims.aud : Array.isArray(claims.aud) ? claims.aud.join(", ") : "missing";
+      } catch { issuer = "unreadable"; audience = "unreadable"; }
+    }
+    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: token {tokenError ? "request failed" : accessToken ? "available" : "missing"}; issuer {issuer}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
+  }
   return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
 }
 function Session({ accountMode = false, seatStorageKey = "mafia-seat" }: { accountMode?: boolean; seatStorageKey?: string }) {
