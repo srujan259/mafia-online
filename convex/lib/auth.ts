@@ -9,9 +9,18 @@ export async function sessionHash(secret: string) {
 }
 export async function requireInvitation(ctx: QueryCtx | MutationCtx, secret: string) {
   const hash = await sessionHash(secret);
-  const invitations = await ctx.db.query("invitations").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
-  if (!invitations.some(invitation => invitation.revokedAt === undefined)) throw new ConvexError("An invitation is required to play.");
+  if (!await hasInvitation(ctx, hash)) throw new ConvexError("An invitation is required to play.");
   return hash;
+}
+export async function hasInvitation(ctx: QueryCtx | MutationCtx, hash: string) {
+  const invitations = await ctx.db.query("invitations").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
+  if (invitations.some(invitation => invitation.revokedAt === undefined)) return true;
+  const claims = await ctx.db.query("invitationClaims").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
+  for (const claim of claims) {
+    const invitation = await ctx.db.get(claim.invitationId);
+    if (invitation && invitation.revokedAt === undefined) return true;
+  }
+  return false;
 }
 export async function authorize(ctx: QueryCtx | MutationCtx, gameId: Id<"games">, secret: string) {
   const hash = await requireInvitation(ctx, secret);

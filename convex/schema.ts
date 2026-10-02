@@ -9,7 +9,11 @@ export default defineSchema({
   invitations: defineTable({
     codeHash: v.string(), label: v.string(), createdAt: v.number(), expiresAt: v.number(),
     claimedBy: v.optional(v.string()), claimedAt: v.optional(v.number()), revokedAt: v.optional(v.number()),
+    maxClaims: v.optional(v.number()), claimCount: v.optional(v.number()),
   }).index("by_code_hash", ["codeHash"]).index("by_claimed_by", ["claimedBy"]),
+  invitationClaims: defineTable({
+    invitationId: v.id("invitations"), claimedBy: v.string(), claimedAt: v.number(),
+  }).index("by_invitation", ["invitationId"]).index("by_claimed_by", ["claimedBy"]),
   games: defineTable({
     code: v.string(), title: v.string(), hostId: v.optional(v.id("players")), phase,
     round: v.number(), epoch: v.number(), deadline: v.optional(v.number()),

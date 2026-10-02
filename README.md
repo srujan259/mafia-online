@@ -36,17 +36,23 @@ If you only want to exercise game rules without a LiveKit project, set `ALLOW_NO
 
 ## Deploy
 
-Deploy the frontend on Vercel and the game backend on Convex. Set `CONVEX_DEPLOY_KEY` in Vercel for the production Convex deployment, then use this Vercel build command:
+Deploy the frontend on Vercel and the game backend on Convex. Set `CONVEX_DEPLOY_KEY` in Vercel for the Convex deployment you intend the site to use, then use this Vercel build command:
 
 ```sh
 npx convex deploy --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL --cmd 'npm run build'
 ```
 
-Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on the **production Convex deployment** before hosting a game. They do not belong in Vercel's public environment variables. Each environment needs its own Convex configuration. Then do a multi-device test of lobby, private Mafia night, day, voting, and reconnection before inviting a full group.
+Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on that **same Convex deployment** before hosting a game. They do not belong in Vercel's public environment variables. Each environment needs its own Convex configuration. Then do a multi-device test of lobby, private Mafia night, day, voting, and reconnection before inviting a full group.
 
-After the new Convex functions have deployed, run `node scripts/create-invite.mjs "Your name" --prod` from a terminal signed in to the **same Convex project**. Paste the printed one-time code into the deployed site. Repeat with a separate label for each person you invite. A code expires after seven days if unused. Once claimed, it is bound to that browser's stored guest secret; clearing site data or moving to another device requires a new invitation. An admitted guest may create rooms but still needs a room's six-character code to join it. If the Vercel production domain is publicly reachable, visitors can see the invitation screen, but game creation, room joining, state, and media access are enforced by Convex. Vercel Deployment Protection is a separate hosting setting; if enabled, visitors must pass that gate before seeing the game. This is possession-based invitation access, not verified email identity.
+After the new Convex functions have deployed, sign in with `npx convex login` and issue the invitation on the **deployment used by the deployed site**. For `https://mafia-online-pearl.vercel.app/`, the current frontend points to the Convex development deployment `polite-buzzard-693`:
 
-The invite command prints an invitation ID. To revoke access later, run `npx convex run invitations:revoke '{"invitationId":"PASTE_ID"}' --prod`. Do not publish invitation codes. The CLI functions that issue and revoke them are internal, so website visitors cannot call them.
+```sh
+node scripts/create-invite.mjs "Your name" --deployment polite-buzzard-693
+```
+
+For a group of eight, issue one code with `node scripts/create-invite.mjs "Friday friends" --uses 8 --deployment polite-buzzard-693`, then share that code with the eight people. Each browser claims one of the eight uses. The default without `--uses` remains a single-person code. Check that the script prints `Convex deployment: https://polite-buzzard-693.convex.cloud`. Do not use `--prod` merely because the Vercel URL is a production URL: the frontend currently points to a **development** Convex deployment. The script checks its target before issuing a code. A code accepts new claims for seven days; claimed access persists until revoked. Once claimed, it is bound to that browser's stored guest secret; clearing site data or moving to another device uses another available claim or requires a new invitation. An admitted guest may create rooms but still needs a room's six-character code to join it. Anyone who receives a shared code can claim one of its remaining uses, so share it only with intended guests. If the Vercel production domain is publicly reachable, visitors can see the invitation screen, but game creation, room joining, state, and media access are enforced by Convex. Vercel Deployment Protection is a separate hosting setting; if enabled, visitors must pass that gate before seeing the game. This is possession-based invitation access, not verified email identity.
+
+The invite command prints an invitation ID. To revoke access later, run `npx convex run invitations:revoke '{"invitationId":"PASTE_ID"}' --deployment polite-buzzard-693` for that same deployment. Do not publish invitation codes. The CLI functions that issue and revoke them are internal, so website visitors cannot call them.
 
 For a solo production flow check, set `NEXT_PUBLIC_CONVEX_URL` to the **production Convex URL** before running `node scripts/fill-local-room.mjs ROOM_CODE`. The helper derives the target deployment from that URL and will create test invitations and seats in that deployment. Use a throwaway room; these seats cannot test real video or hidden-role conversations.
 

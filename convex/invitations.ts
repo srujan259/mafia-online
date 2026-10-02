@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { cleanName, sessionHash } from "./lib/auth";
+import { cleanName, hasInvitation, sessionHash } from "./lib/auth";
 
 function normalizeCode(code: string) {
   if (code.length > 64) throw new ConvexError("Enter a valid invitation code.");
@@ -16,14 +16,16 @@ async function codeHash(code: string) {
 
 // Only a deployment administrator can run internal functions via the Convex CLI/dashboard.
 export const issue = internalMutation({
-  args: { codeHash: v.string(), label: v.string() },
+  args: { codeHash: v.string(), label: v.string(), maxClaims: v.optional(v.number()) },
   handler: async (ctx, args) => {
     if (!/^[a-f0-9]{64}$/.test(args.codeHash)) throw new ConvexError("Invalid invitation hash.");
+    const maxClaims = args.maxClaims ?? 1;
+    if (!Number.isInteger(maxClaims) || maxClaims < 1 || maxClaims > 100) throw new ConvexError("Allow between 1 and 100 guests per invitation.");
     const label = cleanName(args.label, 40);
     const existing = await ctx.db.query("invitations").withIndex("by_code_hash", q => q.eq("codeHash", args.codeHash)).first();
     if (existing) throw new ConvexError("This invitation already exists.");
     const now = Date.now();
-    return await ctx.db.insert("invitations", { codeHash: args.codeHash, label, createdAt: now, expiresAt: now + 7 * 24 * 60 * 60 * 1000 });
+    return await ctx.db.insert("invitations", { codeHash: args.codeHash, label, createdAt: now, expiresAt: now + 7 * 24 * 60 * 60 * 1000, maxClaims, claimCount: 0 });
   },
 });
 
@@ -54,8 +56,7 @@ export const status = query({
   args: { secret: v.string() },
   handler: async (ctx, args) => {
     const hash = await sessionHash(args.secret);
-    const invitations = await ctx.db.query("invitations").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
-    return invitations.some(invitation => invitation.revokedAt === undefined);
+    return await hasInvitation(ctx, hash);
   },
 });
 
@@ -67,9 +68,18 @@ export const redeem = mutation({
     const digest = await codeHash(normalized);
     const invitation = await ctx.db.query("invitations").withIndex("by_code_hash", q => q.eq("codeHash", digest)).first();
     if (!invitation || invitation.revokedAt !== undefined || invitation.expiresAt <= Date.now()) throw new ConvexError("This invitation is invalid or has expired.");
-    if (invitation.claimedBy && invitation.claimedBy !== hash) throw new ConvexError("This invitation has already been used.");
-    const existing = await ctx.db.query("invitations").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
-    if (existing.some(item => item.revokedAt === undefined && item._id !== invitation._id)) throw new ConvexError("This browser already has access.");
-    if (!invitation.claimedBy) await ctx.db.patch(invitation._id, { claimedBy: hash, claimedAt: Date.now() });
+    if ((invitation.maxClaims ?? 1) === 1) {
+      if (invitation.claimedBy && invitation.claimedBy !== hash) throw new ConvexError("This invitation has already been used.");
+      if (invitation.claimedBy === hash) return;
+      if (await hasInvitation(ctx, hash)) throw new ConvexError("This browser already has access.");
+      await ctx.db.patch(invitation._id, { claimedBy: hash, claimedAt: Date.now(), claimCount: 1 });
+      return;
+    }
+    const claims = await ctx.db.query("invitationClaims").withIndex("by_claimed_by", q => q.eq("claimedBy", hash)).collect();
+    if (claims.some(claim => claim.invitationId === invitation._id)) return;
+    if (await hasInvitation(ctx, hash)) throw new ConvexError("This browser already has access.");
+    if ((invitation.claimCount ?? 0) >= (invitation.maxClaims ?? 1)) throw new ConvexError("This invitation has reached its guest limit.");
+    await ctx.db.insert("invitationClaims", { invitationId: invitation._id, claimedBy: hash, claimedAt: Date.now() });
+    await ctx.db.patch(invitation._id, { claimCount: (invitation.claimCount ?? 0) + 1 });
   },
 });

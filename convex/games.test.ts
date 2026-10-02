@@ -27,6 +27,24 @@ describe("rooms and private game state", () => {
     expect(await t.query(api.invitations.status, { secret: secret(1) })).toBe(false);
     await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).rejects.toThrow(/invitation/i);
   });
+  it("admits a limited group with one code and revokes every group member", async () => {
+    const t = convexTest(schema, modules);
+    const code = "a".repeat(32);
+    const codeHash = createHash("sha256").update(code).digest("hex");
+    const invitationId = await t.mutation(internal.invitations.issue, { codeHash, label: "Friday group", maxClaims: 3 });
+    for (let n = 1; n <= 3; n++) {
+      await t.mutation(api.invitations.redeem, { secret: secret(n), code });
+      expect(await t.query(api.invitations.status, { secret: secret(n) })).toBe(true);
+    }
+    await t.mutation(api.invitations.redeem, { secret: secret(1), code });
+    await expect(t.mutation(api.invitations.redeem, { secret: secret(4), code })).rejects.toThrow(/guest limit/i);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Group game", secret: secret(1) });
+    await t.mutation(api.games.join, { name: "Friend", code: room.code, secret: secret(2) });
+    await t.mutation(internal.invitations.revoke, { invitationId });
+    for (let n = 1; n <= 3; n++) expect(await t.query(api.invitations.status, { secret: secret(n) })).toBe(false);
+    await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(2) })).rejects.toThrow(/invitation/i);
+    await expect(t.mutation(api.invitations.redeem, { secret: secret(4), code })).rejects.toThrow(/invalid or has expired/i);
+  });
   it("keeps a reconnecting guest in the same seat and rejects another secret", async () => {
     const t = convexTest(schema, modules);
     await expect(t.mutation(api.games.create, { name: "Host", title: "Friday Mafia", secret: secret(1) })).rejects.toThrow(/invitation/i);
