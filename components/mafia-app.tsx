@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useCallback, useEffect, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { AuthKitProvider, useAccessToken, useAuth } from "@workos-inc/authkit-nextjs/components";
 import { ConvexProvider, ConvexProviderWithAuth, ConvexReactClient, useMutation, useQuery, useConvexAuth, useConvexConnectionState } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -32,9 +32,11 @@ function RoleIcon({ role, size = 22 }: { role?: Role; size?: number }) {
   return <Icon size={size} />;
 }
 
-export function MafiaApp({ authkitConfigured = false }: { authkitConfigured?: boolean }) {
+type InitialAuth = ComponentProps<typeof AuthKitProvider>["initialAuth"];
+
+export function MafiaApp({ authkitConfigured = false, initialAuth }: { authkitConfigured?: boolean; initialAuth?: InitialAuth }) {
   if (!client) return <Landing configured={false} />;
-  return <ConvexProvider client={client}><ModeGate authkitConfigured={authkitConfigured} /></ConvexProvider>;
+  return <ConvexProvider client={client}><ModeGate authkitConfigured={authkitConfigured} initialAuth={initialAuth} /></ConvexProvider>;
 }
 function useAuthFromAuthKit() {
   const { user, loading: isLoading } = useAuth();
@@ -45,22 +47,25 @@ function useAuthFromAuthKit() {
   }, [user, accessToken, refresh, getAccessToken]);
   return { isLoading: isLoading || (!!user && !accessToken && tokenLoading), isAuthenticated: !!user && !!accessToken, fetchAccessToken };
 }
-function ModeGate({ authkitConfigured }: { authkitConfigured: boolean }) {
+function ModeGate({ authkitConfigured, initialAuth }: { authkitConfigured: boolean; initialAuth?: InitialAuth }) {
   const mode = useQuery(api.auth.mode);
   const [slow, setSlow] = useState(false);
   useEffect(() => { const timer = window.setTimeout(() => setSlow(true), 10000); return () => window.clearTimeout(timer); }, []);
   if (!mode) return slow ? <div className="center-page"><Brand /><h1>Can’t reach the game server.</h1><p>Check your connection, then try again.</p><button className="primary" onClick={() => window.location.reload()}>Retry connection</button></div> : <div className="center-page"><Brand /><Hourglass /><p>Opening the table…</p></div>;
   if (mode === "authkit" && !authkitConfigured) return <div className="center-page"><Brand /><h1>Sign-in setup is incomplete.</h1><p>Connect WorkOS to this site before joining a room.</p></div>;
-  return mode === "authkit" ? <AuthKitProvider><ConvexProviderWithAuth client={client!} useAuth={useAuthFromAuthKit}><AuthKitSession /></ConvexProviderWithAuth></AuthKitProvider> : <Session />;
+  return mode === "authkit" ? <AuthKitProvider initialAuth={initialAuth}><ConvexProviderWithAuth client={client!} useAuth={useAuthFromAuthKit}><AuthKitSession /></ConvexProviderWithAuth></AuthKitProvider> : <Session />;
 }
 function AuthKitSession() {
   const { user, loading, signOut } = useAuth();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { accessToken, loading: tokenLoading, error: tokenError } = useAccessToken();
   const connection = useConvexConnectionState();
-  if (loading || isLoading || (user && tokenLoading)) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const timer = window.setTimeout(() => setSlow(true), 10000); return () => window.clearTimeout(timer); }, []);
+  const checking = loading || isLoading || (!!user && tokenLoading);
+  if (checking && !slow) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
   if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Sign in to play.</h1><p className="muted">Use the email address invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
-  if (!isAuthenticated) {
+  if (!isAuthenticated || checking) {
     let issuer = "unavailable";
     let audience = "unavailable";
     if (accessToken) {
@@ -70,7 +75,7 @@ function AuthKitSession() {
         audience = typeof claims.aud === "string" ? claims.aud : Array.isArray(claims.aud) ? claims.aud.join(", ") : "missing";
       } catch { issuer = "unreadable"; audience = "unreadable"; }
     }
-    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: token {tokenError ? "request failed" : accessToken ? "available" : "missing"}; issuer {issuer}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
+    return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><h1>Unable to verify your account.</h1><p className="muted">Your WorkOS sign-in succeeded, but the game could not verify its access token.</p><p className="muted small">Diagnostics: token {tokenError ? "request failed" : accessToken ? "available" : tokenLoading ? "loading" : "missing"}; issuer {issuer}; audience {audience}; game connection {connection.isWebSocketConnected ? "connected" : "disconnected"}; game verification {isLoading ? "pending" : "rejected"}.</p><button className="primary full" onClick={() => window.location.reload()}>Retry verification</button><button className="text-link" onClick={() => void signOut()}>Sign out</button></div></div>;
   }
   return <Session key={user.id} accountMode seatStorageKey={`mafia-seat-${user.id}`} />;
 }
