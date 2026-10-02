@@ -18,12 +18,15 @@ afterEach(() => vi.unstubAllEnvs());
 describe("rooms and private game state", () => {
   it("uses the verified WorkOS account across devices and rejects guest secrets", async () => {
     vi.stubEnv("AUTHKIT_AUTH_REQUIRED", "true");
+    vi.stubEnv("WORKOS_CLIENT_ID", "client_mafia");
     const t = convexTest(schema, modules);
     expect(await t.query(api.auth.mode)).toBe("authkit");
     await admit(t, 1);
     await expect(t.mutation(api.games.create, { name: "Guest", title: "Blocked", secret: secret(1) })).rejects.toThrow(/sign in/i);
-    const host = t.withIdentity({ subject: "user_host" });
-    const friend = t.withIdentity({ subject: "user_friend" });
+    const host = t.withIdentity({ subject: "user_host", client_id: "client_mafia" });
+    const friend = t.withIdentity({ subject: "user_friend", client_id: "client_mafia" });
+    const otherApp = t.withIdentity({ subject: "user_other", client_id: "client_other" });
+    await expect(otherApp.mutation(api.games.create, { name: "Other", title: "Blocked", secret: secret(2) })).rejects.toThrow(/Mafia application/i);
     const room = await host.mutation(api.games.create, { name: "Host", title: "WorkOS game", secret: secret(1) });
     const first = await host.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
     await host.mutation(api.games.join, { name: "Another browser", code: room.code, secret: secret(99) });
@@ -34,6 +37,7 @@ describe("rooms and private game state", () => {
     expect((await friend.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).me.id).not.toBe(first.me.id);
     await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).rejects.toThrow(/sign in/i);
     await expect(t.action(api.media.token, { gameId: room.gameId, secret: secret(1), epoch: 0 })).rejects.toThrow(/sign in/i);
+    await expect(otherApp.action(api.media.token, { gameId: room.gameId, secret: secret(1), epoch: 0 })).rejects.toThrow(/Mafia application/i);
   });
   it("admits one guest per invite and revocation immediately removes access", async () => {
     const t = convexTest(schema, modules);

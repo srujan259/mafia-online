@@ -1,8 +1,16 @@
 import { ConvexError } from "convex/values";
-import type { QueryCtx, MutationCtx } from "../_generated/server";
+import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
 export const authkitRequired = () => process.env.AUTHKIT_AUTH_REQUIRED === "true";
+
+export async function requireWorkosSubject(ctx: QueryCtx | MutationCtx | ActionCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new ConvexError("Sign in to play.");
+  const clientId = process.env.WORKOS_CLIENT_ID;
+  if (!clientId || identity["client_id"] !== clientId) throw new ConvexError("This account is not signed in to the Mafia application.");
+  return identity.subject;
+}
 
 export async function sessionHash(secret: string) {
   if (!/^[a-f0-9]{64}$/.test(secret)) throw new ConvexError("Invalid guest session. Please reload.");
@@ -11,9 +19,7 @@ export async function sessionHash(secret: string) {
 }
 export async function requireInvitation(ctx: QueryCtx | MutationCtx, secret: string) {
   if (authkitRequired()) {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Sign in to play.");
-    return `workos:${identity.subject}`;
+    return `workos:${await requireWorkosSubject(ctx)}`;
   }
   const hash = await sessionHash(secret);
   if (!await hasInvitation(ctx, hash)) throw new ConvexError("An invitation is required to play.");
