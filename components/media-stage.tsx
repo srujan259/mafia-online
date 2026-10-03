@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction } from "convex/react";
 import { LiveKitRoom, ParticipantTile, RoomAudioRenderer, StartAudio, useConnectionState, useLocalParticipant, useTracks } from "@livekit/components-react";
 import { ConnectionState, Track } from "livekit-client";
@@ -36,7 +36,15 @@ function CallContent({ data, viewing, devices, onDevices, message, privateRoom }
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   const [mediaError, setMediaError] = useState("");
   const [cameraBusy, setCameraBusy] = useState(false);
-  const mayPublish = data.me.alive || data.me.isNarrator || data.game.phase === "lobby" || data.game.phase === "ended";
+  const mayPublish = !privateRoom || data.me.alive;
+  const restored = useRef(false);
+  useEffect(() => {
+    if (connection !== ConnectionState.Connected) { restored.current = false; return; }
+    if (restored.current || privateRoom) return;
+    restored.current = true;
+    if (devices.mic) void localParticipant.setMicrophoneEnabled(true).catch(() => setMediaError("Your microphone did not reconnect. Turn it on below."));
+    if (devices.cam) void localParticipant.setCameraEnabled(true).catch(() => setMediaError("Your camera did not reconnect. Turn it on below."));
+  }, [connection, devices.cam, devices.mic, localParticipant, privateRoom]);
   async function toggleMic() { try { await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled); onDevices({ ...devices, mic: !isMicrophoneEnabled }); setMediaError(""); } catch (error) { setMediaError(error instanceof Error ? error.message : "Microphone unavailable."); } }
   async function toggleCam() {
     setCameraBusy(true);
@@ -58,12 +66,12 @@ function CallContent({ data, viewing, devices, onDevices, message, privateRoom }
   return <div className="call-wrap"><div className="call-banner"><span><span className="status-dot" />{privateRoom ? `Private Mafia room · ${viewing.length} Mafia${data.game.narrationMode === "volunteer" ? " · moderator listening" : ""}` : `${viewing.length} at the table`}</span><span className="muted">{connection === ConnectionState.Connected ? "Live" : connection === ConnectionState.Reconnecting ? "Reconnecting" : "Connecting"}</span></div>
     <div className={`video-grid ${privateRoom ? "private-grid" : ""}`}>{viewing.map(p => {
       const track = tracks.find(t => t.participant.identity === p.id);
-      return <div className={`video-cell ${!p.alive && !p.isNarrator ? "out" : ""}`} key={p.id}>
+      return <div className="video-cell" key={p.id}>
         {track ? <ParticipantTile trackRef={track} className="media-tile" /> : <div className="video-placeholder"><span>{p.name.slice(0, 1).toUpperCase()}</span></div>}
-        <div className="video-label"><span>{p.name}{p.id === data.me.id ? " · you" : ""}</span>{p.isNarrator ? <span>moderator</span> : !p.alive && <span>spectating</span>}</div>
+        <div className="video-label"><span>{p.name}{p.id === data.me.id ? " · you" : ""}</span>{p.isNarrator ? <span>moderator</span> : !p.alive && <span>eliminated</span>}</div>
       </div>;
     })}</div>
-    <div className="call-controls"><button className={`media-toggle ${!isMicrophoneEnabled ? "media-toggle-off" : ""}`} aria-pressed={isMicrophoneEnabled} onClick={toggleMic} disabled={!mayPublish || connection !== ConnectionState.Connected}>{isMicrophoneEnabled ? <Mic size={17} /> : <MicOff size={17} />}{isMicrophoneEnabled ? "Mute mic" : "Turn mic on"}</button><button className={`media-toggle ${!isCameraEnabled ? "media-toggle-off" : ""}`} aria-pressed={isCameraEnabled} onClick={toggleCam} disabled={!mayPublish || cameraBusy || connection !== ConnectionState.Connected}>{isCameraEnabled ? <Camera size={17} /> : <CameraOff size={17} />}{cameraBusy ? "Opening camera…" : isCameraEnabled ? "Turn camera off" : "Turn camera on"}</button><StartAudio label="Allow audio playback" /><span className="muted small"><Volume2 size={15} /> {!mayPublish ? "Spectating · mic and camera off" : connection === ConnectionState.Connected ? "Choose a button to turn on your mic or camera" : "Controls unlock when the call connects"}</span></div>
+    <div className="call-controls"><button className={`media-toggle ${!isMicrophoneEnabled ? "media-toggle-off" : ""}`} aria-pressed={isMicrophoneEnabled} onClick={toggleMic} disabled={!mayPublish || connection !== ConnectionState.Connected}>{isMicrophoneEnabled ? <Mic size={17} /> : <MicOff size={17} />}{isMicrophoneEnabled ? "Mute mic" : "Turn mic on"}</button><button className={`media-toggle ${!isCameraEnabled ? "media-toggle-off" : ""}`} aria-pressed={isCameraEnabled} onClick={toggleCam} disabled={!mayPublish || cameraBusy || connection !== ConnectionState.Connected}>{isCameraEnabled ? <Camera size={17} /> : <CameraOff size={17} />}{cameraBusy ? "Opening camera…" : isCameraEnabled ? "Turn camera off" : "Turn camera on"}</button><StartAudio label="Allow audio playback" /><span className="muted small"><Volume2 size={15} /> {connection === ConnectionState.Connected ? "Choose a button to turn on your mic or camera" : "Controls unlock when the call connects"}</span></div>
     {cameraBusy && <p className="muted small" role="status">Waiting for camera access in your browser…</p>}
     {(mediaError || message) && <p className="error" role="alert">{mediaError || message}</p>}
     <RoomAudioRenderer />

@@ -379,5 +379,7 @@ describe("rooms and private game state", () => {
     expect(state.events[0].text).toContain(victim.name);
     expect(state.players.find(p => p.id === victim._id)?.alive).toBe(false);
     expect(await t.query(internal.games.mediaGrant, moderator)).toMatchObject({ publish: true });
+    expect(await t.query(internal.games.mediaGrant, innocentSeat)).toMatchObject({ publish: true });
+    await expect(t.mutation(api.games.choose, { ...innocentSeat, epoch: state.game.epoch, targetId: mafia._id, skip: false })).rejects.toThrow();
   });
 });

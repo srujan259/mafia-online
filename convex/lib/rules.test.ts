@@ -53,7 +53,7 @@ describe("round rules", () => {
     expect(mediaAccess("night", players[0])).toEqual({ channel: "private", publish: true });
     expect(mediaAccess("night", players[0], "detective")).toBeNull();
     expect(mediaAccess("night", players[4])).toBeNull();
-    expect(mediaAccess("day", { ...players[0], alive: false })).toEqual({ channel: "table", publish: false });
+    expect(mediaAccess("day", { ...players[0], alive: false })).toEqual({ channel: "table", publish: true });
   });
   it("keeps short night turns within the configured night duration", () => {
     for (const seconds of [30, 45, 60, 90]) {

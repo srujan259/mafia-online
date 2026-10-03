@@ -71,6 +71,6 @@ export function canChoose(phase: Phase, actor: Person, target: Person | undefine
 
 export function mediaAccess(phase: Phase, player: Person, stage?: NightStage, isNarrator = false) {
   if (phase === "night") return (!stage || stage === "mafia") && (player.alive && player.role === "mafia" || isNarrator) ? { channel: "private", publish: !isNarrator } : null;
-  if (["lobby", "day", "ended"].includes(phase)) return { channel: "table", publish: phase === "ended" || phase === "lobby" || player.alive || isNarrator };
+  if (["lobby", "day", "ended"].includes(phase)) return { channel: "table", publish: true };
   return null;
 }
