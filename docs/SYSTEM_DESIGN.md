@@ -9,7 +9,7 @@ This describes the current implementation. The [product plan](PLAN.md) covers de
 | WorkOS AuthKit | Signs in invited people and manages their account sessions. Public sign-up is disabled on the hosted site. |
 | Vercel / Next.js | Serves the website and browser interface, starts the WorkOS sign-in flow, and handles its callback. |
 | Convex | Verifies the WorkOS token, issues a short-lived game token, stores rooms and game data, enforces player permissions, streams each player's allowed state, schedules phases, and issues LiveKit access tokens. |
-| LiveKit Cloud | Carries the actual camera and microphone streams. It has a shared table room, phase-specific private Mafia rooms, and an audio-only moderator channel when a player volunteers to moderate. |
+| LiveKit Cloud | Carries camera and microphone streams. It has a shared table room, phase-specific private Mafia rooms, an audio-only moderator channel, and a moderator-only night camera view in volunteer mode. |
 
 The hosted site requires a WorkOS account invited by the organizer. A separate six-character room code identifies a game. The browser talks to Convex for game actions and state, and to LiveKit for media. Local development can instead use the older guest-invitation mode. The LiveKit API secret stays in Convex; the browser receives only a short-lived token for the call room it may join.
 
@@ -20,7 +20,7 @@ The hosted site requires a WorkOS account invited by the organizer. A separate s
 | Player's browser | **Client application and device APIs** | React draws the screens. Local storage remembers the player's seat. Browser speech synthesis reads automatic cues. Camera and microphone access happens on the player's device. |
 | Vercel + Next.js | **Web hosting and authentication callback** | Vercel builds and serves the site. Next.js redirects to WorkOS, handles the return callback, and loads the account session. The browser JavaScript knows the public Convex URL. |
 | WorkOS AuthKit | **Identity provider** | Hosted sign-in checks the invited account and returns an access token representing that user. It does not assign Mafia roles or control game rooms. |
-| Convex database | **Persistent documents and indexes** | `invitations`, `games`, `players`, `choices`, `investigations`, and `events` survive refreshes. Indexes look up invitations by hash or claimed session, rooms by code, players by game or session, and choices by game and phase epoch. |
+| Convex database | **Persistent documents and indexes** | `invitations`, `games`, `players`, `choices`, `mafiaMessages`, `investigations`, and `events` survive refreshes. Indexes look up invitations by hash or claimed session, rooms by code, players by game or session, and choices and chat by game and phase epoch. |
 | Convex functions | **Server-side application logic and authorization** | A token-exchange action verifies WorkOS and signs a game token. Queries read permitted state; mutations validate and atomically change game records; other actions call LiveKit using server-held secrets. |
 | Convex subscriptions | **Realtime state sync** | Each browser subscribes to `games.state`. When a relevant database record changes, Convex sends that player's updated view over its client connection, so the roster, phase, and result update without polling the full game. |
 | Convex scheduler | **Durable background jobs** | Automatic narration mode schedules the next phase at a deadline. Transitions schedule LiveKit room cleanup and retry it on failure. |
@@ -54,9 +54,9 @@ The phase is a **state machine**: lobby → reveal → Mafia → Detective → D
 
 ### LiveKit: call rooms and permissions
 
-A LiveKit **room** is the call space, a **participant** is one connected person, and a **track** is one microphone or camera stream. The app uses a shared table room for lobby/day, a private room for the Mafia turn, and a separate moderator audio room in volunteer mode. Detective and Doctor submit private choices in Convex rather than joining their own video room. LiveKit carries media, while Convex decides who receives a token for each room. See [rooms, participants, and tracks](https://docs.livekit.io/intro/basics/rooms-participants-tracks/) and [access tokens and grants](https://docs.livekit.io/frontends/reference/tokens-grants/).
+A LiveKit **room** is the call space, a **participant** is one connected person, and a **track** is one microphone or camera stream. The app uses a shared table room for lobby/day and a private room for the Mafia turn. In volunteer mode, a separate moderator audio room sends cues to everyone, and a camera-only night room sends consenting players' cameras to the moderator. The moderator also joins the Mafia room as a listener during their turn. Detective and Doctor submit private choices in Convex rather than joining their own video room. LiveKit carries media, while Convex decides who receives a token for each room. See [rooms, participants, and tracks](https://docs.livekit.io/intro/basics/rooms-participants-tracks/) and [access tokens and grants](https://docs.livekit.io/frontends/reference/tokens-grants/).
 
-The token's **grant** allows joining one named room, subscribing to tracks, and publishing only permitted camera/microphone sources. The moderator channel permits microphone publishing only for the moderator; players can listen. The token has a 30-second lifetime for the initial connection, so the browser requests a fresh one when joining a new phase. Expiry is not the mechanism that removes an already connected player: the transition closes the old LiveKit room before opening the next one.
+The token's **grant** allows joining one named room, subscribing to tracks, and publishing only permitted camera/microphone sources. The moderator channel permits microphone publishing only for the moderator; players can listen. In the night camera room, players may publish camera tracks but cannot subscribe; the moderator can subscribe but cannot publish. A separate Mafia-room token lets the moderator subscribe without publishing. These are distinct LiveKit connections, so the camera view increases participant-minutes. The token has a 30-second lifetime for the initial connection, so the browser requests a fresh one when joining a new phase. Expiry is not the mechanism that removes an already connected player: the transition closes the old LiveKit room before opening the next one.
 
 ### Deployment and secrets
 
@@ -122,9 +122,9 @@ The organizer or volunteer moderator starts only when everyone is ready and has 
 
 ### 4. Play the round
 
-The order is **Mafia → Detective → Doctor → dawn → day discussion → secret vote**. Only living Mafia receive a token for their private video room. Detective and Doctor submit private actions through Convex; they do not get a player video room for those turns. At dawn, Convex resolves all night choices together, announces any death, and privately returns the investigation result to the Detective. Daytime discussion uses the shared LiveKit room. Convex tallies votes, checks victory, and either starts another night or ends the game.
+The order is **Mafia → Detective → Doctor → dawn → day discussion → secret vote**. Living Mafia receive a token to publish in their private video room; the volunteer moderator receives a subscribe-only token. Mafia can also send private text through a Convex mutation. The personalized state query returns those messages only to living Mafia and the moderator while the Mafia turn is active. Detective and Doctor submit private actions through Convex; they do not get a player video room for those turns. At dawn, Convex resolves all night choices together, announces any death, and privately returns the investigation result to the Detective. Daytime discussion uses the shared LiveKit room. Convex tallies votes, checks victory, and either starts another night or ends the game.
 
-Automatic mode uses Convex deadlines and scheduled functions to advance phases; the browser speaks the cues after joining the call. Volunteer mode has no phase timers: the non-playing moderator speaks the cues and presses the advance button. Their separate audio-only channel reaches players during reveal, night, and voting without giving them access to the Mafia conversation.
+Automatic mode uses Convex deadlines and scheduled functions to advance phases; the browser speaks the cues after joining the call. Volunteer mode has no phase timers: the non-playing moderator speaks the cues and presses the advance button. Their separate audio channel reaches players during reveal, night, and voting. The moderator can watch players whose cameras are on during those phases and listen to the Mafia during its turn. Regular players cannot subscribe to the camera room or Mafia room. Co-located Mafia can use text instead of voice, but players must still prevent others nearby from reading their screens.
 
 ### 5. Change media rooms safely
 
@@ -140,9 +140,9 @@ Refreshing the page preserves the seat in browser storage; on the hosted site, C
 - [`app/sign-in/route.ts`](../app/sign-in/route.ts), [`app/callback/route.ts`](../app/callback/route.ts), and [`proxy.ts`](../proxy.ts): WorkOS redirect, callback, and web-session handling.
 - [`convex/authBridge.ts`](../convex/authBridge.ts), [`convex/lib/bridge.ts`](../convex/lib/bridge.ts), and [`convex/auth.config.ts`](../convex/auth.config.ts): verify the WorkOS token, issue a short-lived game token, and configure Convex to accept it.
 - [`convex/lib/auth.ts`](../convex/lib/auth.ts): identify the signed-in account or the local guest and enforce seat access.
-- [`components/media-stage.tsx`](../components/media-stage.tsx) and [`components/moderator-channel.tsx`](../components/moderator-channel.tsx): LiveKit calls and controls.
+- [`components/media-stage.tsx`](../components/media-stage.tsx), [`components/moderator-channel.tsx`](../components/moderator-channel.tsx), and [`components/night-watch.tsx`](../components/night-watch.tsx): LiveKit calls and controls.
 - [`convex/games.ts`](../convex/games.ts): authoritative game actions, per-player state, phase transitions, and scheduling.
 - [`convex/invitations.ts`](../convex/invitations.ts): one-time invite redemption, admission status, admin issue, and revocation.
 - [`convex/media.ts`](../convex/media.ts): LiveKit token grants and old-room cleanup.
 - [`convex/lib/rules.ts`](../convex/lib/rules.ts): role decks, action resolution, voting, and victory rules.
-- [`convex/schema.ts`](../convex/schema.ts): `games`, `players`, `choices`, `investigations`, and `events` tables.
+- [`convex/schema.ts`](../convex/schema.ts): game, player, choice, Mafia message, investigation, and event tables.

@@ -21,6 +21,7 @@ export default defineSchema({
     winner: v.optional(v.union(v.literal("town"), v.literal("mafia"))),
     daySeconds: v.number(), nightSeconds: v.number(), voteSeconds: v.number(),
     narrationMode: v.optional(narrationMode), narratorId: v.optional(v.id("players")),
+    watchRoom: v.optional(v.string()),
     mediaError: v.optional(v.string()), createdAt: v.number(),
   }).index("by_code", ["code"]),
   players: defineTable({
@@ -34,6 +35,9 @@ export default defineSchema({
     gameId: v.id("games"), playerId: v.id("players"), epoch: v.number(),
     targetId: v.optional(v.id("players")), skip: v.boolean(),
   }).index("by_game_epoch", ["gameId", "epoch"]),
+  mafiaMessages: defineTable({
+    gameId: v.id("games"), epoch: v.number(), playerId: v.id("players"), text: v.string(), createdAt: v.number(),
+  }).index("by_game", ["gameId"]).index("by_game_epoch", ["gameId", "epoch"]),
   investigations: defineTable({
     gameId: v.id("games"), playerId: v.id("players"), targetId: v.id("players"), round: v.number(), isMafia: v.boolean(),
   }).index("by_player", ["playerId"]),

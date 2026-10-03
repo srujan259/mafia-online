@@ -9,7 +9,8 @@ import { ArrowRight, Check, CheckCheck, ChevronLeft, Copy, Crown, Eye, EyeOff, F
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { MediaStage } from "./media-stage";
-import { ModeratorChannel } from "./moderator-channel";
+import { MafiaAudioMonitor, ModeratorChannel } from "./moderator-channel";
+import { NightWatch } from "./night-watch";
 import { roleDeck, type NightStage, type Role } from "@/convex/lib/rules";
 import { PRESENCE_REFRESH_MS, PRESENCE_TIMEOUT_MS } from "@/convex/lib/presence";
 
@@ -285,8 +286,8 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
   const nextScene = game.phase === "reveal" ? "Begin Mafia turn" : game.phase === "night" ? game.nightStage === "mafia" ? "Call Detective" : game.nightStage === "detective" ? "Call Doctor" : "Bring everyone to dawn" : game.phase === "day" ? "Open voting" : "Reveal vote";
   const ownName = players.find(p => p.id === me.id)?.name ?? seat.name;
   const nightActor = game.phase === "night" && me.alive && me.role !== "villager" && (!game.nightStage || me.role === game.nightStage);
-  const nightTitle = game.nightStage ? `${roleNames[game.nightStage]}, wake up.` : me.role === "mafia" && me.alive ? "The town is asleep." : "Keep your secrets.";
-  const nightSubtitle = game.nightStage === "mafia" ? "Everyone else sleeps while the Mafia discuss and choose a victim." : game.nightStage === "detective" ? "Only the Detective may investigate. Everyone else waits in silence." : game.nightStage === "doctor" ? "Only the Doctor may protect someone. Dawn is close." : me.role === "mafia" && me.alive ? "Only living Mafia can see and hear this conversation." : "Your microphone and camera are off. Everyone returns at sunrise.";
+  const nightTitle = "Night has fallen.";
+  const nightSubtitle = "Follow the moderator’s cues. Keep your private screen out of sight.";
   const titles = { lobby: "The usual suspects are gathering.", reveal: "A secret worth keeping.", transition: "Setting the scene…", night: nightTitle, day: "Someone here is lying.", vote: "Who doesn’t add up?", ended: "The masks come off." };
   const subtitles = { lobby: "Invite your friends, check your camera, and get comfortable.", reveal: humanNarrator ? "Read your role privately. The moderator will begin the night." : "Read your role privately. Night begins when the countdown ends.", transition: "Closing the previous conversation before opening the next one.", night: nightSubtitle, day: "Listen closely. Ask questions. Make your case.", vote: humanNarrator ? "Choose a player or skip. The moderator ends voting when the group is ready." : "Choose a player or skip. Ballots are revealed together when time runs out.", ended: "Everyone can talk again. Time for the stories behind the stories." };
   return <div className="game-shell">
@@ -295,16 +296,20 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
     <main className="game-main"><div className="game-title"><div><span className="eyebrow">{game.phase === "lobby" ? "Private lobby" : game.phase === "ended" ? "Game complete" : `Round ${game.round} · ${game.phase === "transition" ? "Changing phase" : game.phase}`}<span className="separator">/</span>{game.phase === "lobby" ? `${playingCount} of 12 players${humanNarrator ? " + moderator" : ""}` : `${aliveCount} players alive`}</span><h1>{titles[game.phase]}</h1><p>{subtitles[game.phase]}</p></div><Clock deadline={game.deadline} now={now} /></div>
     {error && <div className="notice error" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError("")}><X size={15} /></button></div>}
     {humanNarrator && ["transition", "reveal", "night", "vote"].includes(game.phase) && <ModeratorChannel key={game.round} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} />}
+    {humanNarrator && ["transition", "reveal", "night", "vote"].includes(game.phase) && <NightWatch key={`watch-${game.round}`} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} cameraWasOn={devices.cam} />}
     {canAdvance && <section className="moderator-panel"><span className="eyebrow">Your cue to say aloud</span><p>{cue}</p>{data.narratorProgress && <span className="muted small">{data.narratorProgress.submitted} of {data.narratorProgress.expected} actions received</span>}<button className="primary" disabled={busy} onClick={() => run(() => advanceAsNarrator({ ...credentials, epoch: game.epoch }))}>{nextScene} <ArrowRight size={16} /></button></section>}
     {game.phase === "night" && game.nightStage && <NightSequence stage={game.nightStage} />}
+    {game.phase === "night" && game.nightStage === "mafia" && me.isNarrator && <MafiaAudioMonitor key={`mafia-listen-${game.epoch}`} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} />}
     <div className="game-layout"><section className="main-stage">
       {game.phase === "transition" ? <div className="night-screen"><span className="celestial"><Hourglass size={34} /></span><h2>One moment, suspects.</h2><p>{game.mediaError || "Your next chapter is almost ready."}</p>{game.mediaError && (host || me.isNarrator) && <button onClick={() => run(() => retry(credentials))} disabled={busy}>Retry connection</button>}</div>
       : game.phase === "reveal" ? <div className="reveal-screen"><span className="eyebrow">{me.isNarrator ? "Your place at the table" : "For your eyes only"}</span><div className="role-emblem">{me.isNarrator ? <Mic size={56} /> : <RoleIcon role={me.role} size={56} />}</div><h2>{me.isNarrator ? "You are the moderator." : `You are ${me.role && roleNames[me.role]}.`}</h2><p>{me.isNarrator ? "You sit out this game. Speak the cues, then advance each scene when the group is ready." : me.role && roleDescriptions[me.role]}</p>{data.teammates.length > 0 && <div className="private-note">Your team: {players.filter(p => data.teammates.includes(p.id)).map(p => p.name).join(", ")}</div>}<span className="muted small">The table is silent while everyone reads their role.</span></div>
       : game.phase === "vote" ? me.isNarrator ? <div className="night-screen"><span className="celestial"><LockKeyhole size={35} /></span><h2>The town is voting.</h2><p>Let everyone confirm a secret ballot before you reveal the result.</p></div> : <ActionPanel key={game.epoch} data={data} secret={secret} now={now} />
       : <>
         {game.phase === "ended" && <div className="victory-banner"><Sparkles size={20} /><div><span className="eyebrow">{game.winner === "town" ? "Town victory" : "Mafia victory"}</span><h2>{game.winner === "town" ? "The town found every last one." : "The Mafia owns the table."}</h2></div></div>}
-        {data.mediaAllowed ? <MediaStage key={`media-${game.epoch}`} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} onConnectionChange={setCallConnected} devices={devices} onDevices={setDevices} /> : <div className="night-screen"><span className="celestial"><Moon size={38} /></span><span className="eyebrow">{nightActor ? "Your private turn" : me.isNarrator ? "Moderating" : "Eyes closed"}</span><h2>{nightActor ? "Your moment to act." : me.isNarrator ? "Guide the night." : "The town is sleeping."}</h2><p>{me.isNarrator ? "Speak each cue in the moderator audio channel above. This night channel is voice-only; your camera is available again during the day. Mafia talk stays private." : !me.alive ? "Stay for the reveal. Private night conversations stay private." : nightActor ? "Make your choice below. Only you can see your action." : "Listen for the next host cue. Your camera and microphone stay off."}</p><span className="pill"><LockKeyhole size={13} /> {me.isNarrator ? "Players’ private calls remain hidden" : "Camera and microphone off"}</span></div>}
+        {data.mediaAllowed && !me.isNarrator ? <MediaStage key={`media-${game.epoch}`} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} onConnectionChange={setCallConnected} devices={devices} onDevices={setDevices} /> : <div className="night-screen"><span className="celestial"><Moon size={38} /></span><span className="eyebrow">{nightActor ? "Your private turn" : me.isNarrator ? "Moderating" : "Eyes closed"}</span><h2>{nightActor ? "Your moment to act." : me.isNarrator ? "Guide the night." : "The town is sleeping."}</h2><p>{me.isNarrator ? "Speak cues in the moderator channel. The Mafia discussion is audible to you above; the camera grid shows connected players whose cameras are on." : !me.alive ? "Stay for the reveal. Private night conversations stay private." : nightActor ? "Make your choice below. Only you can see your action." : "Listen for the next host cue. Your camera is only visible to the moderator when you turn it on."}</p><span className="pill"><LockKeyhole size={13} /> {me.isNarrator ? "Moderator only" : "Private night"}</span></div>}
         {nightActor && <ActionPanel key={`action-${game.epoch}`} data={data} secret={secret} now={now} />}
+        {game.phase === "night" && game.nightStage === "mafia" && me.alive && me.role === "mafia" && <MafiaChat data={data} secret={secret} />}
+        {game.phase === "night" && game.nightStage === "mafia" && me.isNarrator && <MafiaChat data={data} secret={secret} />}
       </>}
       {game.phase === "ended" && <div className="role-reveal-grid">{players.map(p => <div className="reveal-person" key={p.id}>{p.isNarrator ? <Mic size={22} /> : <RoleIcon role={p.role} />}<div><strong>{p.name}</strong><span>{p.isNarrator ? "Moderator" : p.role && roleNames[p.role]}</span></div>{!p.alive && !p.isNarrator && <Skull size={15} />}</div>)}</div>}
     </section><aside className="sidebar">
@@ -333,6 +338,23 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
     </aside></div></main>
     <footer className="game-footer"><span><ShieldCheck size={14} /> {game.phase === "night" ? me.isNarrator ? "Your voice reaches everyone; Mafia talk stays private" : me.role === "mafia" && me.alive ? "Private audience: living Mafia only" : "No private conversations audible" : game.phase === "vote" || game.phase === "reveal" || game.phase === "transition" ? humanNarrator ? "Only the moderator can speak to everyone" : "The table is silent" : "Private room · invite only"}</span><span>{me.isNarrator ? "Moderating" : "Playing"} as {ownName} · <button className="text-button" onClick={onExit}>Leave table</button></span></footer>
   </div>;
+}
+
+function MafiaChat({ data, secret }: { data: GameState; secret: string }) {
+  const send = useMutation(api.games.sendMafiaMessage);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const count = data.players.filter(p => p.alive && (p.id === data.me.id && data.me.role === "mafia" || data.teammates.includes(p.id) || data.moderatorMafiaIds.includes(p.id))).length;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.trim() || busy) return;
+    setBusy(true); setError("");
+    try { await send({ gameId: data.game._id, secret, epoch: data.game.epoch, text: draft }); setDraft(""); }
+    catch (cause) { setError(message(cause)); }
+    finally { setBusy(false); }
+  }
+  return <section className="action-panel mafia-chat"><div className="panel-title"><div><span className="eyebrow">Private Mafia channel</span><h2>{data.me.isNarrator ? "Mafia messages" : "Talk without being overheard."}</h2></div><LockKeyhole size={18} /></div><p className="muted small">{data.me.isNarrator ? "You can read this channel. Only Mafia can write." : count === 1 ? "You are the only Mafia in this game. Choose your victim privately." : "Only living Mafia and the moderator can read this. Use headphones for voice if friends share a room."}</p><div className="mafia-messages" aria-live="polite">{data.mafiaMessages.length ? data.mafiaMessages.map((entry, index) => <p key={`${entry.createdAt}-${index}`}><strong>{data.players.find(p => p.id === entry.senderId)?.name ?? "Mafia"}</strong> {entry.text}</p>) : <p className="muted">No messages this turn.</p>}</div>{!data.me.isNarrator && <form className="mafia-chat-form" onSubmit={submit}><input aria-label="Private Mafia message" value={draft} onChange={event => setDraft(event.target.value)} maxLength={280} placeholder="Message your team privately" /><button type="submit" disabled={!draft.trim() || busy}>Send</button></form>}{error && <p className="error" role="alert">{error}</p>}</section>;
 }
 
 function ActionPanel({ data, secret, now }: { data: GameState; secret: string; now: number }) {

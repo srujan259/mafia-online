@@ -1,6 +1,6 @@
 # Mafia Online
 
-A private, browser-based Mafia game for 6–12 playing friends, with live video and voice. Convex runs the game and keeps roles and votes private; LiveKit handles calls. Choose an automatic narrator or a volunteer moderator who sits out, speaks the cues, and controls when scenes change. Only living Mafia can join their private video room during their turn. Everyone returns to the table for daytime discussion. See the [technical user journey](docs/SYSTEM_DESIGN.md) and [product plan](docs/PLAN.md).
+A private, browser-based Mafia game for 6–12 playing friends, with live video and voice. Convex runs the game and keeps roles and votes private; LiveKit handles calls. Choose an automatic narrator or a volunteer moderator who sits out, speaks the cues, and controls when scenes change. During their turn, living Mafia can talk in a private call or text channel; the volunteer moderator can listen and read, while the town cannot. Everyone returns to the table for daytime discussion. See the [technical user journey](docs/SYSTEM_DESIGN.md) and [product plan](docs/PLAN.md).
 
 ## Play locally
 
@@ -26,7 +26,9 @@ When using a Convex account and a cloud development deployment later, run `npx c
 
 The API secret stays in Convex. Browsers receive short-lived, role-scoped room tokens. Camera and microphone start off; each player turns them on deliberately.
 
-In automatic mode, the narrator speaks wake-up cues using your browser's voice only after you have connected to the call, and shows them on screen. The speaker button mutes or enables narration. In volunteer mode, browser narration is off for everyone. The moderator receives a cue script and a button to move to the next phase; there are no phase timers. Their microphone can address everyone during role reveal, night, and voting through a separate moderator audio channel. Mafia speech stays in its private room, unheard by the moderator or town. The moderator receives no secret role, cannot vote, and can speak in the shared table call during the day. Start a new room to test either mode from the beginning.
+In automatic mode, the narrator speaks wake-up cues using your browser's voice only after you have connected to the call, and shows them on screen. The speaker button mutes or enables narration. In volunteer mode, browser narration is off for everyone. The moderator receives a cue script and a button to move to the next phase; there are no phase timers. Their microphone can address everyone during role reveal, night, and voting through a separate moderator audio channel. During the Mafia turn, the moderator listens to Mafia speech and can read their text chat but cannot speak in that private call. A separate camera-only room lets the moderator see every connected player whose camera is on; players cannot see each other through that room. Players may turn their camera off, and the app never bypasses browser camera permission. The moderator receives no secret role and cannot vote. A new room is needed to test this flow from the beginning.
+
+Mafia counts scale with the number of playing people (excluding the moderator): one Mafia at 6–7, two at 8–10, and three at 11–12. With one Mafia there is no teammate to discuss with. For friends in the same physical room, Mafia can use private text instead of speaking aloud. Private voice requires headphones and enough physical separation to avoid being overheard; everyone should keep their screen out of sight. The night camera room adds LiveKit participants and media usage in volunteer mode, so check your LiveKit allowance before a long group session.
 
 The game enforces secret roles, turn order, server-controlled phase changes, and private call access. It cannot tell whether someone texts another player, shares a screen outside the game, or uses a second device. Agree on fair play with your group before starting.
 
@@ -74,6 +76,6 @@ See [WorkOS invite-only signup](https://workos.com/docs/authkit/invite-only-sign
 
 ## Check the code
 
-`npm run check` runs TypeScript, the rules and access tests, and the production build. The automated tests cover invitation admission and revocation, the automatic game cycle, manual moderator phases, and privacy boundaries. Actual camera, microphone, and cross-device calls still need a LiveKit-backed playtest.
+`npm run check` runs TypeScript, the rules and access tests, and the production build. The automated tests cover invitation admission and revocation, the automatic game cycle, manual moderator phases, camera-room grants, private-chat access, and privacy boundaries. Actual camera, microphone, and cross-device calls still need a LiveKit-backed playtest with real players.
 
 The implementation follows the [Convex Vercel deployment guide](https://docs.convex.dev/production/hosting/vercel) and [LiveKit server SDK](https://docs.livekit.io/reference/server-sdk-js/) guidance.

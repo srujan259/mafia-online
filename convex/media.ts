@@ -37,6 +37,20 @@ export const moderatorToken = action({
   },
 });
 
+export const watchToken = action({
+  args: { gameId: v.id("games"), secret: v.string(), round: v.number() },
+  handler: async (ctx, args): Promise<{ token: string; url: string; round: number } | { unavailable: true } | null> => {
+    const subject = authkitRequired() ? await requireWorkosSubject(ctx) : undefined;
+    const grant = await ctx.runQuery(internal.games.watchGrant, { gameId: args.gameId, secret: args.secret, trustedSubject: subject });
+    if (!grant || grant.round !== args.round) return null;
+    const settings = config();
+    if (!settings) return { unavailable: true };
+    const access = new AccessToken(settings.key, settings.secret, { identity: grant.identity, name: grant.name, ttl: 30 });
+    access.addGrant({ room: grant.room, roomJoin: true, canPublish: grant.publish, canPublishSources: grant.publish ? [TrackSource.CAMERA] : [], canSubscribe: grant.subscribe, canPublishData: false, canUpdateOwnMetadata: false });
+    return { token: await access.toJwt(), url: settings.url, round: grant.round };
+  },
+});
+
 export const closeAndAdvance = internalAction({
   args: { gameId: v.id("games"), epoch: v.number(), oldRoom: v.optional(v.string()), attempt: v.number() },
   handler: async (ctx, args): Promise<null> => {

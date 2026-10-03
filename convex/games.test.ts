@@ -234,7 +234,7 @@ describe("rooms and private game state", () => {
     expect(state.game.winner).toBe("town");
     expect(state.players.every(p => p.role)).toBe(true);
   });
-  it("lets a non-playing volunteer moderate the phases without hearing Mafia's private call", async () => {
+  it("lets a non-playing moderator watch cameras and hear Mafia while private chat stays restricted", async () => {
     vi.stubEnv("ALLOW_NO_MEDIA", "true");
     const t = convexTest(schema, modules);
     for (let i = 1; i <= 7; i++) await admit(t, i);
@@ -261,6 +261,8 @@ describe("rooms and private game state", () => {
     expect(state.players.filter(p => p.isNarrator)).toHaveLength(1);
     expect(await t.query(internal.games.moderatorGrant, moderator)).toMatchObject({ publish: true });
     expect(await t.query(internal.games.moderatorGrant, organizer)).toMatchObject({ publish: false });
+    expect(await t.query(internal.games.watchGrant, moderator)).toMatchObject({ publish: false, subscribe: true });
+    expect(await t.query(internal.games.watchGrant, organizer)).toMatchObject({ publish: true, subscribe: false });
     await expect(t.mutation(api.games.advanceAsNarrator, { ...organizer, epoch: state.game.epoch })).rejects.toThrow();
     await t.mutation(api.games.advanceAsNarrator, { ...moderator, epoch: state.game.epoch });
     state = await t.query(api.games.state, moderator);
@@ -268,13 +270,22 @@ describe("rooms and private game state", () => {
     state = await t.query(api.games.state, moderator);
     expect(state.game.nightStage).toBe("mafia");
     expect(state.game.deadline).toBeUndefined();
-    expect(await t.query(internal.games.mediaGrant, moderator)).toBeNull();
+    expect(await t.query(internal.games.mediaGrant, moderator)).toMatchObject({ publish: false });
     const roles = await t.run(ctx => ctx.db.query("players").withIndex("by_game", q => q.eq("gameId", room.gameId)).collect());
     const mafia = roles.find(p => p.role === "mafia")!;
     const victim = roles.find(p => p.role === "villager")!;
     const views = await Promise.all(seats.map(seat => t.query(api.games.state, seat)));
     const mafiaSeat = seats[views.findIndex(view => view.me.id === mafia._id)];
+    const innocentSeat = seats[views.findIndex(view => view.me.id === victim._id)];
     expect(await t.query(internal.games.mediaGrant, mafiaSeat)).toMatchObject({ publish: true });
+    await expect(t.mutation(api.games.sendMafiaMessage, { ...innocentSeat, epoch: state.game.epoch, text: "Not Mafia" })).rejects.toThrow(/Mafia chat/);
+    await expect(t.mutation(api.games.sendMafiaMessage, { ...moderator, epoch: state.game.epoch, text: "Not Mafia" })).rejects.toThrow(/Mafia chat/);
+    await t.mutation(api.games.sendMafiaMessage, { ...mafiaSeat, epoch: state.game.epoch, text: "  Victim tonight  " });
+    expect((await t.query(api.games.state, moderator)).mafiaMessages).toMatchObject([{ senderId: mafia._id, text: "Victim tonight" }]);
+    expect((await t.query(api.games.state, mafiaSeat)).mafiaMessages).toHaveLength(1);
+    expect((await t.query(api.games.state, innocentSeat)).mafiaMessages).toEqual([]);
+    expect((await t.query(api.games.state, moderator)).moderatorMafiaIds).toContain(mafia._id);
+    expect((await t.query(api.games.state, innocentSeat)).moderatorMafiaIds).toEqual([]);
     await expect(t.mutation(api.games.choose, { ...moderator, epoch: state.game.epoch, targetId: victim._id, skip: false })).rejects.toThrow();
     await t.mutation(api.games.choose, { ...mafiaSeat, epoch: state.game.epoch, targetId: victim._id, skip: false });
     expect((await t.query(api.games.state, moderator)).narratorProgress).toEqual({ submitted: 1, expected: 1 });
@@ -286,6 +297,7 @@ describe("rooms and private game state", () => {
       expect(state.game.nightStage).toBe(stage);
       expect(state.game.deadline).toBeUndefined();
       expect(await t.query(internal.games.mediaGrant, mafiaSeat)).toBeNull();
+      expect((await t.query(api.games.state, moderator)).mafiaMessages).toEqual([]);
     }
     await t.mutation(api.games.advanceAsNarrator, { ...moderator, epoch: state.game.epoch });
     state = await t.query(api.games.state, moderator);

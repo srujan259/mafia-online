@@ -81,6 +81,10 @@ export const state = query({
     const events = await ctx.db.query("events").withIndex("by_game", q => q.eq("gameId", game._id)).order("desc").take(20);
     const teammates = player.role === "mafia" ? players.filter(p => p.role === "mafia" && p._id !== player._id).map(p => p._id) : [];
     const isNarrator = game.narrationMode === "volunteer" && game.narratorId === player._id;
+    const mafiaTurn = game.phase === "night" && (!game.nightStage || game.nightStage === "mafia");
+    const mafiaMessages = mafiaTurn && (isNarrator || player.alive && player.role === "mafia")
+      ? await ctx.db.query("mafiaMessages").withIndex("by_game_epoch", q => q.eq("gameId", game._id).eq("epoch", game.epoch)).order("desc").take(30)
+      : [];
     const activeRole = game.phase === "night" ? game.nightStage : undefined;
     const expected = game.phase === "vote" ? players.filter(p => p.alive).length : activeRole ? players.filter(p => p.alive && p.role === activeRole).length : 0;
     return {
@@ -88,6 +92,8 @@ export const state = query({
       me: { id: player._id, role: player.role, alive: player.alive, ready: player.ready, isNarrator },
       players: players.map(p => ({ id: p._id, name: p.name, alive: p.alive, ready: p.ready, isNarrator: game.narrationMode === "volunteer" && game.narratorId === p._id, lastSeen: p.lastSeen, role: game.phase === "ended" ? p.role : undefined })),
       teammates,
+      moderatorMafiaIds: isNarrator && mafiaTurn ? players.filter(p => p.alive && p.role === "mafia").map(p => p._id) : [],
+      mafiaMessages: mafiaMessages.reverse().map(message => ({ senderId: message.playerId, text: message.text, createdAt: message.createdAt })),
       myChoice: choices.find(c => c.playerId === player._id) ? { targetId: choices.find(c => c.playerId === player._id)!.targetId, skip: choices.find(c => c.playerId === player._id)!.skip } : null,
       mafiaChoices: game.phase === "night" && (!game.nightStage || game.nightStage === "mafia") && player.alive && player.role === "mafia" ? choices.filter(c => teammates.includes(c.playerId)).map(c => ({ playerId: c.playerId, targetId: c.targetId, skip: c.skip })) : [],
       investigations: investigations.map(i => ({ targetId: i.targetId, round: i.round, isMafia: i.isMafia })),
@@ -107,6 +113,16 @@ export const presence = query({ args: credentials, handler: async (ctx, args) =>
 export const heartbeat = mutation({ args: credentials, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   if (game.phase !== "ended") await touchPresence(ctx, player);
+} });
+export const sendMafiaMessage = mutation({ args: { ...credentials, epoch: v.number(), text: v.string() }, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+  if (game.phase !== "night" || game.nightStage !== "mafia" || game.epoch !== args.epoch || !player.alive || player.role !== "mafia") throw new ConvexError("Mafia chat is only available during the Mafia turn.");
+  const text = args.text.trim().replace(/[\u0000-\u001f\u007f]/g, " ");
+  if (!text || text.length > 280) throw new ConvexError("Use a message between 1 and 280 characters.");
+  const messages = await ctx.db.query("mafiaMessages").withIndex("by_game_epoch", q => q.eq("gameId", game._id).eq("epoch", game.epoch)).order("desc").take(30);
+  if (messages.length >= 30) throw new ConvexError("This Mafia turn has reached its chat limit.");
+  if (messages[0]?.playerId === player._id && Date.now() - messages[0].createdAt < 1000) throw new ConvexError("Wait a moment before sending another message.");
+  await ctx.db.insert("mafiaMessages", { gameId: game._id, epoch: game.epoch, playerId: player._id, text, createdAt: Date.now() });
 } });
 export const ready = mutation({ args: { ...credentials, ready: v.boolean() }, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
@@ -171,7 +187,7 @@ export const start = mutation({ args: credentials, handler: async (ctx, args) =>
   for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
   for (let i = 0; i < playing.length; i++) await ctx.db.patch(playing[i]._id, { role: deck[i], alive: true });
   if (game.narratorId) await ctx.db.patch(game.narratorId, { role: undefined, alive: false });
-  await ctx.db.patch(game._id, { round: 1 });
+  await ctx.db.patch(game._id, { round: 1, watchRoom: game.narrationMode === "volunteer" ? `mafia-${game._id}-${game.epoch + 1}-watch` : undefined });
   await event(ctx, { ...game, round: 1 }, "Roles are dealt. Your secret is yours to keep.");
   await transition(ctx, game, "reveal");
 } });
@@ -270,6 +286,11 @@ export const moderatorGrant = internalQuery({ args: { ...credentials, trustedSub
   if (game.narrationMode !== "volunteer" || !game.narratorId || !["transition", "reveal", "night", "vote"].includes(game.phase) || game.round < 1) return null;
   return { room: `mafia-${game._id}-${game.round}-moderator`, identity: player._id, name: player.name, publish: player._id === game.narratorId, round: game.round };
 } });
+export const watchGrant = internalQuery({ args: { ...credentials, trustedSubject: v.optional(v.string()) }, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret, args.trustedSubject);
+  if (game.narrationMode !== "volunteer" || !game.narratorId || !["transition", "reveal", "night", "vote"].includes(game.phase) || game.round < 1) return null;
+  return { room: game.watchRoom ?? `mafia-${game._id}-${game.round}-watch`, identity: player._id, name: player.name, publish: player._id !== game.narratorId, subscribe: player._id === game.narratorId, round: game.round };
+} });
 export const rematch = mutation({ args: credentials, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   if ((game.hostId !== player._id && game.narratorId !== player._id) || game.phase !== "ended") throw new ConvexError("Only the organizer or volunteer moderator can open a new game.");
@@ -279,6 +300,7 @@ export const rematch = mutation({ args: credentials, handler: async (ctx, args) 
     for (const i of await ctx.db.query("investigations").withIndex("by_player", q => q.eq("playerId", p._id)).collect()) await ctx.db.delete(i._id);
   }
   for (const e of await ctx.db.query("events").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(e._id);
-  await ctx.db.patch(game._id, { winner: undefined, round: 0 });
+  for (const message of await ctx.db.query("mafiaMessages").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(message._id);
+  await ctx.db.patch(game._id, { winner: undefined, round: 0, watchRoom: undefined });
   await transition(ctx, game, "lobby");
 } });

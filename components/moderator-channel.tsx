@@ -35,6 +35,26 @@ export function ModeratorChannel({ data, secret, enabled, onEnable }: { data: Ga
   </LiveKitRoom>;
 }
 
+export function MafiaAudioMonitor({ data, secret, enabled, onEnable }: { data: GameState; secret: string; enabled: boolean; onEnable: () => void }) {
+  const getToken = useAction(api.media.token);
+  const [grant, setGrant] = useState<{ token: string; url: string; epoch: number } | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!enabled) return;
+    let current = true;
+    getToken({ gameId: data.game._id, secret, epoch: data.game.epoch }).then(result => {
+      if (!current) return;
+      if (!result || "unavailable" in result) setError("Mafia audio is unavailable. Check LiveKit setup.");
+      else { setGrant(result); setError(""); }
+    }).catch(() => { if (current) setError("Could not connect to Mafia audio. Refresh to retry."); });
+    return () => { current = false; };
+  }, [data.game._id, data.game.epoch, enabled, getToken, secret]);
+  if (!enabled) return <div className="moderator-audio"><span><Headphones size={16} /> Mafia audio is off</span><button onClick={onEnable}>Listen to Mafia</button></div>;
+  if (error) return <div className="moderator-audio error" role="alert">{error}</div>;
+  if (!grant || grant.epoch !== data.game.epoch) return <div className="moderator-audio"><Radio size={16} /> Connecting Mafia audio…</div>;
+  return <LiveKitRoom serverUrl={grant.url} token={grant.token} connect audio={false} video={false} options={{ adaptiveStream: true }} onError={cause => setError(cause.message)}><div className="moderator-audio"><span><Headphones size={16} /> Mafia discussion · moderator listening</span><StartAudio label="Allow Mafia audio" /><RoomAudioRenderer /></div></LiveKitRoom>;
+}
+
 function ModeratorVoice({ isNarrator }: { isNarrator: boolean }) {
   const connection = useConnectionState();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
