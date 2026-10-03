@@ -5,9 +5,9 @@ export type Team = "town" | "mafia";
 export type Person = { _id: string; alive: boolean; role?: Role };
 export type Choice = { playerId: string; targetId?: string; skip?: boolean };
 
-export function roleDeck(count: number): Role[] {
+export function roleDeck(count: number, smallGameMafiaCount: 1 | 2 = 1): Role[] {
   if (count < 6 || count > 12) throw new Error("Games need 6–12 players.");
-  const mafia = count <= 7 ? 1 : count <= 10 ? 2 : 3;
+  const mafia = count <= 7 ? smallGameMafiaCount : count <= 10 ? 2 : 3;
   return [...Array<Role>(mafia).fill("mafia"), "doctor", "detective", ...Array<Role>(count - mafia - 2).fill("villager")];
 }
 

@@ -15,6 +15,8 @@ const players: Person[] = [
 describe("round rules", () => {
   it("scales the Mafia team across supported player counts", () => {
     expect([6, 7, 8, 10, 11, 12].map(n => roleDeck(n).filter(r => r === "mafia").length)).toEqual([1, 1, 2, 2, 3, 3]);
+    expect([6, 7].map(n => roleDeck(n, 2).filter(r => r === "mafia").length)).toEqual([2, 2]);
+    expect(roleDeck(6, 2).filter(r => r === "villager")).toHaveLength(2);
     expect(() => roleDeck(5)).toThrow(); expect(() => roleDeck(13)).toThrow();
   });
   it("blocks a kill when living Mafia disagree or one is missing", () => {

@@ -14,7 +14,7 @@ A private, phone-friendly Mafia game for 6–12 playing friends, plus an optiona
 
 ## Default rules
 
-- 6–7 players: 1 Mafia; 8–10: 2 Mafia; 11–12: 3 Mafia. One Doctor, one Detective, remaining players Villagers.
+- 6–7 players: the organizer chooses 1 or 2 Mafia in the lobby (default 1); 8–10: 2 Mafia; 11–12: 3 Mafia. One Doctor, one Detective, remaining players Villagers. Two Mafia with six players is intentionally a harder variant for the town.
 - All participants must be ready; the room organizer or volunteer moderator starts. Random roles are assigned on the backend to playing participants.
 - The organizer chooses automatic narration or a volunteer moderator in the lobby. In volunteer mode, one participant sits out, receives no secret role or vote, and controls phase changes. Six playing participants are still required.
 - Automatic mode reveals roles for 12 seconds, then begins Night 1. It calls Mafia, Detective, and Doctor in sequence before dawn. Default night: 60 seconds total, discussion: 180 seconds, secret voting: 30 seconds.
@@ -37,7 +37,7 @@ Never send the complete game state or other players' secrets to a browser. On th
 
 Use a fresh LiveKit room for each media phase. At a transition, stop issuing tokens, disconnect the previous media room on the server, then open the next phase. Non-Mafia never receive a Mafia room token. The Mafia room closes before the Detective turn begins. Everyone leaves the day room together so individual departure events cannot reveal Mafia membership. Spectators get subscribe-only grants during public phases. Tokens permit only camera and microphone publishing, never screen share or data messages. No roles are stored in public participant metadata.
 
-In volunteer mode, a second, audio-only moderator room spans role reveal, night, voting, and their transitions. Only the moderator receives microphone publishing rights there; everyone else can only listen. Mafia have a separate private room for their discussion, so the moderator and town cannot hear them. The moderator speaks in the normal shared table room during daytime discussion.
+In volunteer mode, an audio-only moderator room spans role reveal, night, voting, and their transitions. Only the moderator receives microphone publishing rights there; everyone else can only listen. Mafia have a separate private room for their discussion; the moderator can listen but the town cannot. A separate camera room lets the moderator watch connected players whose cameras are on, without letting players watch one another. The moderator speaks in the normal shared table room during daytime discussion.
 
 The backend checks every role action against the current turn and either a server deadline or the moderator's manual phase change; it never trusts a browser's displayed role or timer. This prevents in-app impersonation and out-of-turn actions. It cannot detect off-app texting, a second device, photographing a role screen, or verbal collusion. A human host cannot reliably detect these either. Groups should agree on fair play before starting.
 

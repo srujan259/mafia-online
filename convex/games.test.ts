@@ -119,6 +119,25 @@ describe("rooms and private game state", () => {
     expect(latest[stalePlayer.id]).toBeGreaterThan(Date.now() - 30_000);
     await t.mutation(api.games.start, seats[0]);
   });
+  it("lets the organizer choose two Mafia for six players before roles are dealt", async () => {
+    vi.stubEnv("ALLOW_NO_MEDIA", "true");
+    const t = convexTest(schema, modules);
+    for (let n = 1; n <= 6; n++) await admit(t, n);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Two Mafia", secret: secret(1) });
+    const seats = Array.from({ length: 6 }, (_, index) => ({ gameId: room.gameId, secret: secret(index + 1) }));
+    for (let n = 2; n <= 6; n++) await t.mutation(api.games.join, { code: room.code, name: `Player ${n}`, secret: secret(n) });
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    await expect(t.mutation(api.games.setSmallGameMafiaCount, { ...seats[1], count: 2 })).rejects.toThrow(/organizer/i);
+    await t.mutation(api.games.setSmallGameMafiaCount, { ...seats[0], count: 2 });
+    const lobby = await t.query(api.games.state, seats[0]);
+    expect(lobby.game.smallGameMafiaCount).toBe(2);
+    expect(lobby.players.every(p => !p.ready)).toBe(true);
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    await t.mutation(api.games.start, seats[0]);
+    const roles = await t.run(ctx => ctx.db.query("players").withIndex("by_game", q => q.eq("gameId", room.gameId)).collect());
+    expect(roles.filter(p => p.role === "mafia")).toHaveLength(2);
+    await expect(t.mutation(api.games.setSmallGameMafiaCount, { ...seats[0], count: 1 })).rejects.toThrow(/lobby/i);
+  });
   it("never includes another player's role or investigation in their private view", async () => {
     const t = convexTest(schema, modules);
     await admit(t, 1); await admit(t, 2);

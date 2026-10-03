@@ -118,7 +118,7 @@ The browser subscribes to `games.state`; Convex updates the roster, readiness, a
 
 ### 3. Start and reveal roles
 
-The organizer or volunteer moderator starts only when everyone is ready and has sent a recent heartbeat. Convex shuffles the role deck and stores the assignments. Its personalized state query returns a player's own role, Mafia teammates when applicable, and public information. It does not send other players' hidden roles or votes before the game ends.
+The organizer or volunteer moderator starts only when everyone is ready and has sent a recent heartbeat. For six or seven playing people, the organizer can choose one or two Mafia in the lobby; changing that choice clears readiness. Larger games use the fixed role counts. Convex shuffles the selected role deck and stores the assignments. Its personalized state query returns a player's own role, Mafia teammates when applicable, and public information. It does not send other players' hidden roles or votes before the game ends.
 
 ### 4. Play the round
 

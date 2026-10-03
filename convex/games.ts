@@ -43,7 +43,7 @@ export const create = mutation({
       if (!(await ctx.db.query("games").withIndex("by_code", q => q.eq("code", code)).first())) break;
       if (attempt === 9) throw new ConvexError("Could not create a room. Please try again.");
     }
-    const gameId = await ctx.db.insert("games", { code, title, phase: "lobby", round: 0, epoch: 0, narrationMode: "automatic", daySeconds: 180, nightSeconds: 60, voteSeconds: 30, createdAt: Date.now() });
+    const gameId = await ctx.db.insert("games", { code, title, phase: "lobby", round: 0, epoch: 0, narrationMode: "automatic", daySeconds: 180, nightSeconds: 60, voteSeconds: 30, smallGameMafiaCount: 1, createdAt: Date.now() });
     const playerId = await ctx.db.insert("players", { gameId, sessionHash: hash, name, alive: true, ready: false, lastSeen: Date.now(), joinedAt: Date.now() });
     await ctx.db.insert("presence", { gameId, playerId, lastSeen: Date.now() });
     await ctx.db.patch(gameId, { hostId: playerId, mediaRoom: `mafia-${gameId}-0-table` });
@@ -88,7 +88,7 @@ export const state = query({
     const activeRole = game.phase === "night" ? game.nightStage : undefined;
     const expected = game.phase === "vote" ? players.filter(p => p.alive).length : activeRole ? players.filter(p => p.alive && p.role === activeRole).length : 0;
     return {
-      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, mediaError: game.mediaError },
+      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
       me: { id: player._id, role: player.role, alive: player.alive, ready: player.ready, isNarrator },
       players: players.map(p => ({ id: p._id, name: p.name, alive: p.alive, ready: p.ready, isNarrator: game.narrationMode === "volunteer" && game.narratorId === p._id, lastSeen: p.lastSeen, role: game.phase === "ended" ? p.role : undefined })),
       teammates,
@@ -137,6 +137,15 @@ export const settings = mutation({ args: { ...credentials, daySeconds: v.number(
   await ctx.db.patch(game._id, { daySeconds: args.daySeconds, nightSeconds: args.nightSeconds });
   for (const p of await playersIn(ctx, game._id)) await ctx.db.patch(p._id, { ready: false });
 } });
+export const setSmallGameMafiaCount = mutation({ args: { ...credentials, count: v.union(v.literal(1), v.literal(2)) }, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+  if (game.hostId !== player._id || game.phase !== "lobby") throw new ConvexError("Only the room organizer can change Mafia count in the lobby.");
+  const playing = (await playersIn(ctx, game._id)).filter(p => p._id !== game.narratorId);
+  if (playing.length > 7) throw new ConvexError("At eight or more players, Mafia count is set automatically.");
+  if ((game.smallGameMafiaCount ?? 1) === args.count) return;
+  await ctx.db.patch(game._id, { smallGameMafiaCount: args.count });
+  for (const p of await playersIn(ctx, game._id)) await ctx.db.patch(p._id, { ready: false });
+} });
 export const setNarrationMode = mutation({ args: { ...credentials, mode: narrationMode }, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   if (game.hostId !== player._id || game.phase !== "lobby") throw new ConvexError("Only the room organizer can change narration.");
@@ -183,7 +192,7 @@ export const start = mutation({ args: credentials, handler: async (ctx, args) =>
   if (game.narrationMode === "volunteer" && !game.narratorId) throw new ConvexError("A volunteer moderator needs to join before starting.");
   if (playing.length < 6 || playing.length > 12) throw new ConvexError("You need 6–12 playing friends.");
   if (players.some(p => !p.ready) || (await Promise.all(players.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) throw new ConvexError("Everyone must be connected and ready.");
-  const deck = roleDeck(playing.length);
+  const deck = roleDeck(playing.length, game.smallGameMafiaCount ?? 1);
   for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
   for (let i = 0; i < playing.length; i++) await ctx.db.patch(playing[i]._id, { role: deck[i], alive: true });
   if (game.narratorId) await ctx.db.patch(game.narratorId, { role: undefined, alive: false });

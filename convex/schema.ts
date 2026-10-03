@@ -20,6 +20,7 @@ export default defineSchema({
     nextPhase: v.optional(phase), nightStage: v.optional(nightStage), nextNightStage: v.optional(nightStage), mediaRoom: v.optional(v.string()),
     winner: v.optional(v.union(v.literal("town"), v.literal("mafia"))),
     daySeconds: v.number(), nightSeconds: v.number(), voteSeconds: v.number(),
+    smallGameMafiaCount: v.optional(v.union(v.literal(1), v.literal(2))),
     narrationMode: v.optional(narrationMode), narratorId: v.optional(v.id("players")),
     watchRoom: v.optional(v.string()),
     mediaError: v.optional(v.string()), createdAt: v.number(),
