@@ -2,7 +2,7 @@
 
 ## Product
 
-A private, phone-friendly Mafia game for 6–12 playing friends, plus an optional non-playing moderator. Join by room code and name, with a persistent guest session rather than account registration. Video is the main social surface. Convex owns game state, scheduling, authorization, and persistence; LiveKit owns audio/video. Next.js renders the interface and can deploy on Vercel. No extra backend or database service.
+A private, phone-friendly Mafia game for 6–12 playing friends, plus an optional non-playing moderator. The hosted site admits invited WorkOS accounts; local development can use guest invitations. Players join a specific game by room code and name. Video is the main social surface. Convex owns game state, scheduling, authorization, and persistence; LiveKit owns audio/video. Next.js renders the interface and runs the WorkOS sign-in callback on Vercel. No extra database service is needed.
 
 ## Build sequence
 
@@ -33,7 +33,7 @@ A private, phone-friendly Mafia game for 6–12 playing friends, plus an optiona
 
 ## Privacy and phase transitions
 
-Never send the complete game state or other players' secrets to a browser. Guests authenticate with a cryptographically random session secret stored on their device; Convex stores only its hash. A room code is an invitation, not a player's identity.
+Never send the complete game state or other players' secrets to a browser. On the hosted site, WorkOS authenticates invited accounts and Convex uses the verified account ID to identify each player's seat. In local guest mode, a random browser secret identifies the seat and Convex stores only its hash. A room code identifies a game, not a player's identity.
 
 Use a fresh LiveKit room for each media phase. At a transition, stop issuing tokens, disconnect the previous media room on the server, then open the next phase. Non-Mafia never receive a Mafia room token. The Mafia room closes before the Detective turn begins. Everyone leaves the day room together so individual departure events cannot reveal Mafia membership. Spectators get subscribe-only grants during public phases. Tokens permit only camera and microphone publishing, never screen share or data messages. No roles are stored in public participant metadata.
 
@@ -49,4 +49,4 @@ Test voting ties/abstentions, saves, simultaneous resolution, Mafia disagreement
 
 ## Not in this release
 
-Public matchmaking, accounts, payments, recording, AI voices, custom role packs, and native mobile apps. Automatic narration uses written announcements and browser speech synthesis; it does not need an AI service.
+Public matchmaking, payments, recording, AI voices, custom role packs, and native mobile apps. Invited accounts are included on the hosted site. Automatic narration uses written announcements and browser speech synthesis; it does not need an AI service.
