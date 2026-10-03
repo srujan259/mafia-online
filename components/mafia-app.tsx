@@ -223,7 +223,7 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
   const credentials = { gameId: seat.gameId, secret };
   const data = useQuery(api.games.state, credentials);
   const convex = useConvex();
-  const heartbeat = useMutation(api.games.heartbeat), ready = useMutation(api.games.ready), start = useMutation(api.games.start), settings = useMutation(api.games.settings), remove = useMutation(api.games.removePlayer), rematch = useMutation(api.games.rematch), reclaim = useMutation(api.games.reclaimHost), retry = useMutation(api.games.retryTransition);
+  const heartbeat = useMutation(api.games.heartbeat), ready = useMutation(api.games.ready), start = useMutation(api.games.start), settings = useMutation(api.games.settings), remove = useMutation(api.games.removePlayer), rematch = useMutation(api.games.rematch), reclaim = useMutation(api.games.reclaimHost), retry = useMutation(api.games.retryTransition), resume = useMutation(api.games.resume);
   const setNarrationMode = useMutation(api.games.setNarrationMode), setSmallGameMafiaCount = useMutation(api.games.setSmallGameMafiaCount), volunteerNarrator = useMutation(api.games.volunteerNarrator), advanceAsNarrator = useMutation(api.games.advanceAsNarrator);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [copied, setCopied] = useState(false), [peek, setPeek] = useState(false), [callEnabled, setCallEnabled] = useState(false);
   const [narratorOn, setNarratorOn] = useState(true);
@@ -293,6 +293,7 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
   return <div className="game-shell">
     <header className="game-header"><div className="row"><Brand /><span className="room-title">{game.title}</span></div><div className="row">{humanNarrator ? <span className="human-host-badge"><Mic size={15} /> Volunteer moderator</span> : <button className="icon-button" aria-label={narratorOn ? "Mute narrator" : "Enable narrator"} aria-pressed={narratorOn} onClick={() => setNarratorOn(!narratorOn)}>{narratorOn ? <Volume2 size={17} /> : <VolumeX size={17} />}</button>}<button className="invite-button" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}<span>{game.code}</span></button><button className="icon-button" aria-label="Leave table" onClick={onExit}><LogOut size={17} /></button></div></header>
     {!connection.isWebSocketConnected && <div className="notice" role="status"><Radio size={16} /> Reconnecting to the game. Your seat is saved.</div>}
+    {game.pausedAt && <div className="notice pause-notice" role="status"><Hourglass size={16} /><span>Game paused because a living player disconnected. Everyone must return before the timer can restart.</span><button disabled={busy} onClick={() => run(() => resume({ ...credentials, epoch: game.epoch }))}>Resume game</button></div>}
     <main className="game-main"><div className="game-title"><div><span className="eyebrow">{game.phase === "lobby" ? "Private lobby" : game.phase === "ended" ? "Game complete" : `Round ${game.round} · ${game.phase === "transition" ? "Changing phase" : game.phase}`}<span className="separator">/</span>{game.phase === "lobby" ? `${playingCount} of 12 players${humanNarrator ? " + moderator" : ""}` : `${aliveCount} players alive`}</span><h1>{titles[game.phase]}</h1><p>{subtitles[game.phase]}</p></div><Clock deadline={game.deadline} now={now} /></div>
     {error && <div className="notice error" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError("")}><X size={15} /></button></div>}
     {humanNarrator && ["transition", "reveal", "night", "vote"].includes(game.phase) && <ModeratorChannel key={game.round} data={data} secret={secret} enabled={callEnabled} onEnable={() => setCallEnabled(true)} />}
@@ -367,7 +368,7 @@ function ActionPanel({ data, secret, now }: { data: GameState; secret: string; n
   const eligible = players.filter(p => p.alive && (voting ? p.id !== me.id : me.role === "mafia" ? p.id !== me.id && !data.teammates.includes(p.id) : me.role === "detective" ? p.id !== me.id : true));
   const savedChoice = data.myChoice?.skip ? "skip" : data.myChoice?.targetId;
   const submitted = selected && selected === savedChoice;
-  const actionClosed = !!game.deadline && now >= game.deadline;
+  const actionClosed = !!game.pausedAt || !!game.deadline && now >= game.deadline;
   async function submit() {
     setBusy(true); setError("");
     try { await choose({ gameId: game._id, secret, epoch: game.epoch, skip: selected === "skip", targetId: selected === "skip" ? undefined : selected as Id<"players"> }); }

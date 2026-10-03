@@ -16,7 +16,7 @@ export default defineSchema({
   }).index("by_invitation", ["invitationId"]).index("by_claimed_by", ["claimedBy"]),
   games: defineTable({
     code: v.string(), title: v.string(), hostId: v.optional(v.id("players")), phase,
-    round: v.number(), epoch: v.number(), deadline: v.optional(v.number()),
+    round: v.number(), epoch: v.number(), deadline: v.optional(v.number()), pausedAt: v.optional(v.number()),
     nextPhase: v.optional(phase), nightStage: v.optional(nightStage), nextNightStage: v.optional(nightStage), mediaRoom: v.optional(v.string()),
     winner: v.optional(v.union(v.literal("town"), v.literal("mafia"))),
     daySeconds: v.number(), nightSeconds: v.number(), voteSeconds: v.number(),

@@ -138,6 +138,37 @@ describe("rooms and private game state", () => {
     expect(roles.filter(p => p.role === "mafia")).toHaveLength(2);
     await expect(t.mutation(api.games.setSmallGameMafiaCount, { ...seats[0], count: 1 })).rejects.toThrow(/lobby/i);
   });
+  it("pauses automatic rounds when a living player disconnects and resumes after reconnect", async () => {
+    vi.stubEnv("ALLOW_NO_MEDIA", "true");
+    const t = convexTest(schema, modules);
+    for (let n = 1; n <= 6; n++) await admit(t, n);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Pause test", secret: secret(1) });
+    const seats = Array.from({ length: 6 }, (_, index) => ({ gameId: room.gameId, secret: secret(index + 1) }));
+    for (let n = 2; n <= 6; n++) await t.mutation(api.games.join, { code: room.code, name: `Player ${n}`, secret: secret(n) });
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    await t.mutation(api.games.start, seats[0]);
+    let state = await t.query(api.games.state, seats[0]);
+    await t.mutation(internal.games.finishTransition, { gameId: room.gameId, epoch: state.game.epoch });
+    state = await t.query(api.games.state, seats[0]);
+    const absent = state.players[1];
+    await t.run(async ctx => {
+      const presence = await ctx.db.query("presence").withIndex("by_player", q => q.eq("playerId", absent.id)).first();
+      await ctx.db.patch(presence!._id, { lastSeen: Date.now() - 180_000 });
+      await ctx.db.patch(room.gameId, { deadline: Date.now() - 1 });
+    });
+    await t.mutation(internal.games.advance, { gameId: room.gameId, epoch: state.game.epoch });
+    const paused = await t.query(api.games.state, seats[0]);
+    expect(paused.game.phase).toBe("reveal");
+    expect(paused.game.pausedAt).toBeTypeOf("number");
+    expect(paused.game.deadline).toBeUndefined();
+    await expect(t.mutation(api.games.resume, { ...seats[0], epoch: state.game.epoch })).rejects.toThrow(/reconnect/i);
+    await t.mutation(api.games.heartbeat, seats[1]);
+    await t.mutation(api.games.resume, { ...seats[0], epoch: state.game.epoch });
+    const resumed = await t.query(api.games.state, seats[0]);
+    expect(resumed.game.pausedAt).toBeUndefined();
+    expect(resumed.game.deadline).toBeGreaterThan(Date.now());
+    await expect(t.mutation(api.games.resume, { ...seats[0], epoch: state.game.epoch })).rejects.toThrow(/not paused/i);
+  });
   it("never includes another player's role or investigation in their private view", async () => {
     const t = convexTest(schema, modules);
     await admit(t, 1); await admit(t, 2);

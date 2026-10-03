@@ -25,7 +25,7 @@ async function event(ctx: MutationCtx, game: Doc<"games">, text: string, kind = 
 }
 async function transition(ctx: MutationCtx, game: Doc<"games">, nextPhase: Phase, nextNightStage?: NightStage): Promise<void> {
   const epoch = game.epoch + 1;
-  await ctx.db.patch(game._id, { phase: "transition", nextPhase, nextNightStage, epoch, deadline: undefined, mediaError: undefined });
+  await ctx.db.patch(game._id, { phase: "transition", nextPhase, nextNightStage, epoch, deadline: undefined, pausedAt: undefined, mediaError: undefined });
   await ctx.scheduler.runAfter(0, internal.media.closeAndAdvance, { gameId: game._id, epoch, oldRoom: game.mediaRoom, attempt: 0 });
 }
 
@@ -88,7 +88,7 @@ export const state = query({
     const activeRole = game.phase === "night" ? game.nightStage : undefined;
     const expected = game.phase === "vote" ? players.filter(p => p.alive).length : activeRole ? players.filter(p => p.alive && p.role === activeRole).length : 0;
     return {
-      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
+      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, pausedAt: game.pausedAt, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
       me: { id: player._id, role: player.role, alive: player.alive, ready: player.ready, isNarrator },
       players: players.map(p => ({ id: p._id, name: p.name, alive: p.alive, ready: p.ready, isNarrator: game.narrationMode === "volunteer" && game.narratorId === p._id, lastSeen: p.lastSeen, role: game.phase === "ended" ? p.role : undefined })),
       teammates,
@@ -260,8 +260,24 @@ async function advanceGame(ctx: MutationCtx, game: Doc<"games">): Promise<void> 
 export const advance = internalMutation({ args: { gameId: v.id("games"), epoch: v.number() }, handler: async (ctx, args): Promise<null> => {
   const game = await ctx.db.get(args.gameId);
   if (!game || game.narrationMode === "volunteer" || game.epoch !== args.epoch || !game.deadline || Date.now() < game.deadline || game.phase === "transition") return null;
+  const living = (await playersIn(ctx, game._id)).filter(p => p.alive);
+  if ((await Promise.all(living.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) {
+    await ctx.db.patch(game._id, { deadline: undefined, pausedAt: Date.now() });
+    return null;
+  }
   await advanceGame(ctx, game);
   return null;
+} });
+
+export const resume = mutation({ args: { ...credentials, epoch: v.number() }, handler: async (ctx, args) => {
+  const { game } = await authorize(ctx, args.gameId, args.secret);
+  if (game.narrationMode === "volunteer" || !game.pausedAt || game.epoch !== args.epoch || !["reveal", "night", "day", "vote"].includes(game.phase)) throw new ConvexError("This game is not paused at that scene.");
+  const living = (await playersIn(ctx, game._id)).filter(p => p.alive);
+  if ((await Promise.all(living.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) throw new ConvexError("Wait for every living player to reconnect before resuming.");
+  const seconds = game.phase === "reveal" ? 12 : game.phase === "night" ? nightStageSeconds(game.nightSeconds, game.nightStage ?? "mafia") : game.phase === "day" ? game.daySeconds : game.voteSeconds;
+  const deadline = Date.now() + seconds * 1000;
+  await ctx.db.patch(game._id, { pausedAt: undefined, deadline });
+  await ctx.scheduler.runAt(deadline, internal.games.advance, { gameId: game._id, epoch: game.epoch });
 } });
 
 export const advanceAsNarrator = mutation({ args: { ...credentials, epoch: v.number() }, handler: async (ctx, args) => {
