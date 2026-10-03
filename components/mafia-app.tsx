@@ -43,13 +43,14 @@ export function MafiaApp({ authkitConfigured = false, initialAuth }: { authkitCo
 function useAuthFromAuthKit() {
   const { user, loading: isLoading } = useAuth();
   const { accessToken, loading: tokenLoading, getAccessToken, refresh } = useAccessToken();
+  const userId = user?.id;
   const fetchAccessToken = useCallback(async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
-    if (!user) return null;
+    if (!userId) return null;
     const workosToken = forceRefreshToken ? await refresh() : await getAccessToken();
     if (!workosToken || !bridgeClient) return null;
     return await bridgeClient.action(api.authBridge.exchange, { workosToken });
-  }, [user, accessToken, refresh, getAccessToken]);
-  return { isLoading: isLoading || (!!user && !accessToken && tokenLoading), isAuthenticated: !!user && !!accessToken, fetchAccessToken };
+  }, [userId, refresh, getAccessToken]);
+  return { isLoading: isLoading || (!!userId && !accessToken && tokenLoading), isAuthenticated: !!userId && !!accessToken, fetchAccessToken };
 }
 function ModeGate({ authkitConfigured, initialAuth }: { authkitConfigured: boolean; initialAuth?: InitialAuth }) {
   const [mode, setMode] = useState<"authkit" | "guest" | null>(null);
