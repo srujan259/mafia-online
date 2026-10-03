@@ -29,7 +29,7 @@ A private, phone-friendly Mafia game for 6–12 playing friends, plus an optiona
 - Dead players watch daytime discussion but cannot publish media, vote, or take night actions. Dead Mafia cannot enter subsequent Mafia night rooms.
 - Roles stay secret after elimination and are all revealed when the game ends.
 - Town wins at zero living Mafia. Mafia wins when living Mafia equal or outnumber the other living players. Check immediately after eliminations; rounds have no fixed maximum.
-- Disconnections preserve a player's seat and role. Missing actions follow the normal no-action rules. A present player can reclaim room organization after its holder has been absent for 60 seconds. If the volunteer moderator is absent for 60 seconds, the room organizer may advance scenes so the game does not stall.
+- Disconnections preserve a player's seat and role. Missing actions follow the normal no-action rules. A present player can reclaim room organization after its holder has been absent for 150 seconds. If the volunteer moderator is absent for 150 seconds, the room organizer may advance scenes so the game does not stall.
 
 ## Privacy and phase transitions
 

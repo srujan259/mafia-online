@@ -27,6 +27,9 @@ export default defineSchema({
     gameId: v.id("games"), sessionHash: v.string(), name: v.string(), role: v.optional(role),
     alive: v.boolean(), ready: v.boolean(), lastSeen: v.number(), joinedAt: v.number(),
   }).index("by_game", ["gameId"]).index("by_session", ["sessionHash"]),
+  presence: defineTable({
+    gameId: v.id("games"), playerId: v.id("players"), lastSeen: v.number(),
+  }).index("by_game", ["gameId"]).index("by_player", ["playerId"]),
   choices: defineTable({
     gameId: v.id("games"), playerId: v.id("players"), epoch: v.number(),
     targetId: v.optional(v.id("players")), skip: v.boolean(),

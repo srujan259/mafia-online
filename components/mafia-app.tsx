@@ -3,7 +3,7 @@
 import { Component, useCallback, useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { AuthKitProvider, useAccessToken, useAuth } from "@workos-inc/authkit-nextjs/components";
 import { ConvexHttpClient } from "convex/browser";
-import { ConvexProvider, ConvexProviderWithAuth, ConvexReactClient, useMutation, useQuery, useConvexAuth, useConvexConnectionState } from "convex/react";
+import { ConvexProvider, ConvexProviderWithAuth, ConvexReactClient, useMutation, useQuery, useConvex, useConvexAuth, useConvexConnectionState } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ArrowRight, Check, CheckCheck, ChevronLeft, Copy, Crown, Eye, EyeOff, Fingerprint, HeartPulse, Hourglass, LockKeyhole, LogOut, Mic, Moon, Radio, Search, ShieldCheck, Skull, Sparkles, Sunrise, Users, VenetianMask, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -11,6 +11,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { MediaStage } from "./media-stage";
 import { ModeratorChannel } from "./moderator-channel";
 import { roleDeck, type NightStage, type Role } from "@/convex/lib/rules";
+import { PRESENCE_REFRESH_MS, PRESENCE_TIMEOUT_MS } from "@/convex/lib/presence";
 
 export type GameState = FunctionReturnType<typeof api.games.state>;
 type Seat = { gameId: Id<"games">; code: string; name: string };
@@ -220,6 +221,7 @@ function narratorLine(state: GameState | undefined): string | null {
 export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string; onExit: () => void }) {
   const credentials = { gameId: seat.gameId, secret };
   const data = useQuery(api.games.state, credentials);
+  const convex = useConvex();
   const heartbeat = useMutation(api.games.heartbeat), ready = useMutation(api.games.ready), start = useMutation(api.games.start), settings = useMutation(api.games.settings), remove = useMutation(api.games.removePlayer), rematch = useMutation(api.games.rematch), reclaim = useMutation(api.games.reclaimHost), retry = useMutation(api.games.retryTransition);
   const setNarrationMode = useMutation(api.games.setNarrationMode), volunteerNarrator = useMutation(api.games.volunteerNarrator), advanceAsNarrator = useMutation(api.games.advanceAsNarrator);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [copied, setCopied] = useState(false), [peek, setPeek] = useState(false), [callEnabled, setCallEnabled] = useState(false);
@@ -227,8 +229,29 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
   const [callConnected, setCallConnected] = useState(false);
   const [hasConnectedCall, setHasConnectedCall] = useState(false);
   const [devices, setDevices] = useState({ mic: false, cam: false });
+  const [presence, setPresence] = useState<Record<string, number>>({});
   const connection = useConvexConnectionState(); const now = useNow();
-  useEffect(() => { const beat = () => { heartbeat({ gameId: seat.gameId, secret }).catch(() => {}); }; beat(); const t = setInterval(beat, 20_000); return () => clearInterval(t); }, [heartbeat, seat.gameId, secret]);
+  const readinessKey = data?.game.phase === "lobby" ? data.players.map(player => `${player.id}:${player.ready}`).join("|") : "";
+  useEffect(() => {
+    if (!data || data.game.phase === "ended") return;
+    let active = true;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || document.hidden && !callConnected && !(data.me.isNarrator && callEnabled)) return;
+      inFlight = true;
+      try {
+        await heartbeat({ gameId: seat.gameId, secret });
+        const latest = await convex.query(api.games.presence, { gameId: seat.gameId, secret });
+        if (active) setPresence(latest);
+      } catch { /* Reconnect to Convex on the next interval. */ }
+      finally { inFlight = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, PRESENCE_REFRESH_MS);
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [heartbeat, convex, seat.gameId, secret, data?.game.phase, data?.me.isNarrator, callConnected, callEnabled, readinessKey]);
   useEffect(() => { setPeek(false); setError(""); }, [data?.game.epoch]);
   useEffect(() => { if (!peek) return; const t = setTimeout(() => setPeek(false), 10_000); return () => clearTimeout(t); }, [peek]);
   useEffect(() => { if (callConnected) setHasConnectedCall(true); }, [callConnected]);
@@ -245,15 +268,18 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
   async function copy() { try { await navigator.clipboard.writeText(`${window.location.origin}/?room=${seat.code}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { setError(`Share this room code with your friends: ${seat.code}`); } }
   if (!data) return <div className="center-page"><Brand /><Hourglass /><h2>Finding your table…</h2><button onClick={onExit}>Back</button></div>;
   const { game, me, players } = data;
+  const seen = (player: GameState["players"][number]) => presence[player.id] ?? player.lastSeen;
   const host = me.id === game.hostId;
   const humanNarrator = game.narrationMode === "volunteer";
   const playingCount = players.filter(p => !p.isNarrator).length;
   const aliveCount = players.filter(p => p.alive).length;
-  const hostAbsent = now - (players.find(p => p.id === game.hostId)?.lastSeen ?? 0) > 60_000;
-  const narratorAbsent = now - (players.find(p => p.id === game.narratorId)?.lastSeen ?? 0) > 60_000;
-  const reconnecting = players.filter(p => now - p.lastSeen >= 60_000);
+  const hostPlayer = players.find(p => p.id === game.hostId);
+  const narratorPlayer = players.find(p => p.id === game.narratorId);
+  const hostAbsent = !hostPlayer || now - seen(hostPlayer) >= PRESENCE_TIMEOUT_MS;
+  const narratorAbsent = !narratorPlayer || now - seen(narratorPlayer) >= PRESENCE_TIMEOUT_MS;
+  const reconnecting = players.filter(p => now - seen(p) >= PRESENCE_TIMEOUT_MS);
   const waitingToReady = players.filter(p => !p.ready);
-  const allReady = playingCount >= 6 && (!humanNarrator || !!game.narratorId) && players.every(p => p.ready && now - p.lastSeen < 60_000);
+  const allReady = playingCount >= 6 && (!humanNarrator || !!game.narratorId) && players.every(p => p.ready && now - seen(p) < PRESENCE_TIMEOUT_MS);
   const startHint = playingCount < 6 ? `Need ${6 - playingCount} more playing ${6 - playingCount === 1 ? "person" : "people"}. The moderator sits out.` : humanNarrator && !game.narratorId ? "One person needs to volunteer as moderator." : !callConnected ? "Join the call and wait for Live before starting." : reconnecting.length ? `${reconnecting.map(p => p.name).join(", ")} ${reconnecting.length === 1 ? "needs" : "need"} to reconnect before starting.` : waitingToReady.length ? `Waiting for ${waitingToReady.map(p => p.name).join(", ")} to ready up.` : "Everyone is ready. Start when you are.";
   const canAdvance = humanNarrator && (me.isNarrator || host && narratorAbsent) && ["reveal", "night", "day", "vote"].includes(game.phase);
   const nextScene = game.phase === "reveal" ? "Begin Mafia turn" : game.phase === "night" ? game.nightStage === "mafia" ? "Call Detective" : game.nightStage === "detective" ? "Call Doctor" : "Bring everyone to dawn" : game.phase === "day" ? "Open voting" : "Reveal vote";
@@ -283,7 +309,7 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
       {game.phase === "ended" && <div className="role-reveal-grid">{players.map(p => <div className="reveal-person" key={p.id}>{p.isNarrator ? <Mic size={22} /> : <RoleIcon role={p.role} />}<div><strong>{p.name}</strong><span>{p.isNarrator ? "Moderator" : p.role && roleNames[p.role]}</span></div>{!p.alive && !p.isNarrator && <Skull size={15} />}</div>)}</div>}
     </section><aside className="sidebar">
       {game.phase === "lobby" ? <>
-        <section className="panel"><div className="panel-title"><h2>Your table</h2><span className="pill">{playingCount} / 12 players</span></div><div className="roster">{players.map(p => <div className="roster-row" key={p.id}><span className="mini-avatar">{p.name.slice(0, 1)}</span><span className="roster-name">{p.name}{p.id === me.id ? " · you" : ""}{p.isNarrator ? " · moderator" : ""}<small>{now - p.lastSeen > 60_000 ? "Reconnecting" : p.ready ? "Ready" : "Getting comfortable"}</small></span>{p.id === game.hostId ? <Crown size={14} className="warm" /> : p.ready ? <Check size={15} className="green" /> : null}{host && p.id !== me.id && <button className="remove-button" aria-label={`Remove ${p.name}`} disabled={busy} onClick={() => run(() => remove({ ...credentials, playerId: p.id }))}><X size={12} /></button>}</div>)}</div>{playingCount < 6 && <p className="muted small">{6 - playingCount} more playing {6 - playingCount === 1 ? "friend" : "friends"} needed to start.</p>}</section>
+        <section className="panel"><div className="panel-title"><h2>Your table</h2><span className="pill">{playingCount} / 12 players</span></div><div className="roster">{players.map(p => <div className="roster-row" key={p.id}><span className="mini-avatar">{p.name.slice(0, 1)}</span><span className="roster-name">{p.name}{p.id === me.id ? " · you" : ""}{p.isNarrator ? " · moderator" : ""}<small>{now - seen(p) >= PRESENCE_TIMEOUT_MS ? "Reconnecting" : p.ready ? "Ready" : "Getting comfortable"}</small></span>{p.id === game.hostId ? <Crown size={14} className="warm" /> : p.ready ? <Check size={15} className="green" /> : null}{host && p.id !== me.id && <button className="remove-button" aria-label={`Remove ${p.name}`} disabled={busy} onClick={() => run(() => remove({ ...credentials, playerId: p.id }))}><X size={12} /></button>}</div>)}</div>{playingCount < 6 && <p className="muted small">{6 - playingCount} more playing {6 - playingCount === 1 ? "friend" : "friends"} needed to start.</p>}</section>
         <section className="panel">
           <h2>House rules</h2>
           <label className="rule-row">Narration<select aria-label="Narration mode" value={game.narrationMode} disabled={!host || busy} onChange={e => run(() => setNarrationMode({ ...credentials, mode: e.target.value as "automatic" | "volunteer" }))}><option value="automatic">Automatic voice and timers</option><option value="volunteer">Volunteer moderator</option></select></label>

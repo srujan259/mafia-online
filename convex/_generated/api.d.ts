@@ -14,6 +14,7 @@ import type * as games from "../games.js";
 import type * as invitations from "../invitations.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_bridge from "../lib/bridge.js";
+import type * as lib_presence from "../lib/presence.js";
 import type * as lib_rules from "../lib/rules.js";
 import type * as media from "../media.js";
 
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   invitations: typeof invitations;
   "lib/auth": typeof lib_auth;
   "lib/bridge": typeof lib_bridge;
+  "lib/presence": typeof lib_presence;
   "lib/rules": typeof lib_rules;
   media: typeof media;
 }>;

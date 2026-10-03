@@ -1,0 +1,2 @@
+export const PRESENCE_REFRESH_MS = 60_000;
+export const PRESENCE_TIMEOUT_MS = 150_000;

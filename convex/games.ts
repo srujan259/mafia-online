@@ -6,9 +6,20 @@ import { internal } from "./_generated/api";
 import { authorize, cleanName, requireInvitation } from "./lib/auth";
 import { canChoose, mediaAccess, nightStageSeconds, resolveNight, resolveVote, roleDeck, winner, type NightStage, type Phase } from "./lib/rules";
 import { narrationMode } from "./schema";
+import { PRESENCE_TIMEOUT_MS } from "./lib/presence";
 
 const credentials = { gameId: v.id("games"), secret: v.string() };
 const playersIn = (ctx: Parameters<typeof authorize>[0], gameId: Id<"games">) => ctx.db.query("players").withIndex("by_game", q => q.eq("gameId", gameId)).collect();
+async function lastSeen(ctx: Parameters<typeof authorize>[0], player: Doc<"players">) {
+  const presence = await ctx.db.query("presence").withIndex("by_player", q => q.eq("playerId", player._id)).first();
+  return presence?.lastSeen ?? player.lastSeen;
+}
+async function touchPresence(ctx: MutationCtx, player: Doc<"players">) {
+  const presence = await ctx.db.query("presence").withIndex("by_player", q => q.eq("playerId", player._id)).first();
+  const now = Date.now();
+  if (!presence) await ctx.db.insert("presence", { gameId: player.gameId, playerId: player._id, lastSeen: now });
+  else if (now - presence.lastSeen > 30_000) await ctx.db.patch(presence._id, { lastSeen: now });
+}
 async function event(ctx: MutationCtx, game: Doc<"games">, text: string, kind = "announcement") {
   await ctx.db.insert("events", { gameId: game._id, round: game.round, text, kind });
 }
@@ -34,6 +45,7 @@ export const create = mutation({
     }
     const gameId = await ctx.db.insert("games", { code, title, phase: "lobby", round: 0, epoch: 0, narrationMode: "automatic", daySeconds: 180, nightSeconds: 60, voteSeconds: 30, createdAt: Date.now() });
     const playerId = await ctx.db.insert("players", { gameId, sessionHash: hash, name, alive: true, ready: false, lastSeen: Date.now(), joinedAt: Date.now() });
+    await ctx.db.insert("presence", { gameId, playerId, lastSeen: Date.now() });
     await ctx.db.patch(gameId, { hostId: playerId, mediaRoom: `mafia-${gameId}-0-table` });
     return { gameId, code };
   },
@@ -48,12 +60,13 @@ export const join = mutation({
     if (!game) throw new ConvexError("That room wasn’t found. Check the room code.");
     const players = await playersIn(ctx, game._id);
     const existing = players.find(p => p.sessionHash === hash);
-    if (existing) { await ctx.db.patch(existing._id, { lastSeen: Date.now() }); return { gameId: game._id, code }; }
+    if (existing) { await touchPresence(ctx, existing); return { gameId: game._id, code }; }
     if (game.phase !== "lobby") throw new ConvexError("This game has started. Only existing players can rejoin.");
     if (players.length >= (game.narrationMode === "volunteer" ? 13 : 12)) throw new ConvexError("This room is full.");
     const name = cleanName(args.name);
     if (players.some(p => p.name.toLowerCase() === name.toLowerCase())) throw new ConvexError("Someone already uses that name. Choose another.");
-    await ctx.db.insert("players", { gameId: game._id, sessionHash: hash, name, alive: true, ready: false, lastSeen: Date.now(), joinedAt: Date.now() });
+    const playerId = await ctx.db.insert("players", { gameId: game._id, sessionHash: hash, name, alive: true, ready: false, lastSeen: Date.now(), joinedAt: Date.now() });
+    await ctx.db.insert("presence", { gameId: game._id, playerId, lastSeen: Date.now() });
     return { gameId: game._id, code };
   },
 });
@@ -85,14 +98,21 @@ export const state = query({
   },
 });
 
+export const presence = query({ args: credentials, handler: async (ctx, args) => {
+  await authorize(ctx, args.gameId, args.secret);
+  const records = await ctx.db.query("presence").withIndex("by_game", q => q.eq("gameId", args.gameId)).collect();
+  return Object.fromEntries(records.map(record => [record.playerId, record.lastSeen]));
+} });
+
 export const heartbeat = mutation({ args: credentials, handler: async (ctx, args) => {
-  const { player } = await authorize(ctx, args.gameId, args.secret);
-  if (Date.now() - player.lastSeen > 10_000) await ctx.db.patch(player._id, { lastSeen: Date.now() });
+  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+  if (game.phase !== "ended") await touchPresence(ctx, player);
 } });
 export const ready = mutation({ args: { ...credentials, ready: v.boolean() }, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   if (game.phase !== "lobby") throw new ConvexError("The game has already started.");
-  await ctx.db.patch(player._id, { ready: args.ready, lastSeen: Date.now() });
+  await ctx.db.patch(player._id, { ready: args.ready });
+  await touchPresence(ctx, player);
 } });
 export const settings = mutation({ args: { ...credentials, daySeconds: v.number(), nightSeconds: v.number() }, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
@@ -122,13 +142,15 @@ export const volunteerNarrator = mutation({ args: { ...credentials, volunteer: v
 export const reclaimHost = mutation({ args: credentials, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   const host = game.hostId ? await ctx.db.get(game.hostId) : null;
-  if (host && Date.now() - host.lastSeen < 60_000) throw new ConvexError("The current host is still connected.");
+  if (host && Date.now() - await lastSeen(ctx, host) < PRESENCE_TIMEOUT_MS) throw new ConvexError("The current host is still connected.");
   await ctx.db.patch(game._id, { hostId: player._id });
 } });
 export const removePlayer = mutation({ args: { ...credentials, playerId: v.id("players") }, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   const target = await ctx.db.get(args.playerId);
   if (game.phase !== "lobby" || game.hostId !== player._id || target?.gameId !== game._id || target._id === player._id) throw new ConvexError("You cannot remove this player.");
+  const presence = await ctx.db.query("presence").withIndex("by_player", q => q.eq("playerId", target._id)).first();
+  if (presence) await ctx.db.delete(presence._id);
   await ctx.db.delete(target._id);
   if (game.narratorId === target._id) await ctx.db.patch(game._id, { narratorId: undefined });
   // Retire the entire lobby media epoch so a removed guest cannot reuse its token.
@@ -144,7 +166,7 @@ export const start = mutation({ args: credentials, handler: async (ctx, args) =>
   const playing = players.filter(p => p._id !== game.narratorId);
   if (game.narrationMode === "volunteer" && !game.narratorId) throw new ConvexError("A volunteer moderator needs to join before starting.");
   if (playing.length < 6 || playing.length > 12) throw new ConvexError("You need 6–12 playing friends.");
-  if (players.some(p => !p.ready || Date.now() - p.lastSeen > 60_000)) throw new ConvexError("Everyone must be connected and ready.");
+  if (players.some(p => !p.ready) || (await Promise.all(players.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) throw new ConvexError("Everyone must be connected and ready.");
   const deck = roleDeck(playing.length);
   for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
   for (let i = 0; i < playing.length; i++) await ctx.db.patch(playing[i]._id, { role: deck[i], alive: true });
@@ -221,7 +243,7 @@ export const advanceAsNarrator = mutation({ args: { ...credentials, epoch: v.num
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
   if (game.narrationMode !== "volunteer" || game.epoch !== args.epoch || !["reveal", "night", "day", "vote"].includes(game.phase)) throw new ConvexError("This scene has already changed.");
   const narrator = game.narratorId ? await ctx.db.get(game.narratorId) : null;
-  const narratorAbsent = !narrator || Date.now() - narrator.lastSeen > 60_000;
+  const narratorAbsent = !narrator || Date.now() - await lastSeen(ctx, narrator) >= PRESENCE_TIMEOUT_MS;
   if (game.narratorId !== player._id && !(game.hostId === player._id && narratorAbsent)) throw new ConvexError("Only the volunteer moderator can advance the scene.");
   await advanceGame(ctx, game);
 } });

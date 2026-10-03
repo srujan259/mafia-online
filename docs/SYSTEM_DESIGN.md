@@ -44,7 +44,7 @@ The hosted sign-in follows these steps:
 
 This is a **token exchange** between identity systems: WorkOS proves the person's identity; Convex verifies that proof and issues the format its game backend accepts. The WorkOS token and Convex game token are both distinct from the LiveKit media token. In local guest mode, WorkOS is off: the browser redeems a site invitation and uses a random guest secret whose hash is stored by Convex. The hosted account mode still creates a browser secret for the shared UI, but Convex uses the verified WorkOS user ID, not that secret, as the player's identity.
 
-The browser calls Convex mutations for actions such as readying up, submitting a choice, and starting the game. It subscribes to a personalized query for display. A heartbeat updates `lastSeen` for lobby presence; actual call connectivity is tracked by the LiveKit component. Automatic spoken cues use the browser's speech synthesis after the call has connected. In volunteer mode, a non-playing moderator speaks and advances phases instead.
+The browser calls Convex mutations for actions such as readying up, submitting a choice, and starting the game. It subscribes to a personalized query for display. A heartbeat updates a separate presence record once per minute; the browser checks presence with a one-off query rather than another subscription. Heartbeats and checks pause in hidden tabs without a live call and stop when the game ends. This keeps frequent presence writes from rerunning every player's personalized game-state query. The backend checks presence before starting or allowing takeover; actual call connectivity is tracked by the LiveKit component. Automatic spoken cues use the browser's speech synthesis after the call has connected. In volunteer mode, a non-playing moderator speaks and advances phases instead.
 
 ### Convex: storage, rules, and timing
 
@@ -114,7 +114,7 @@ On the hosted site, the player signs in with their invited WorkOS account before
 
 ### 2. Gather in the lobby
 
-The browser subscribes to `games.state`; Convex updates the roster, readiness, and settings as they change. Each browser sends a heartbeat while at the table. Joining the call invokes a Convex action that checks the current seat and phase, then creates a LiveKit token. Microphone and camera start off. At least six people must be playing; a volunteer moderator is an additional, non-playing person.
+The browser subscribes to `games.state`; Convex updates the roster, readiness, and settings as they change. An active browser sends a heartbeat and reads a presence snapshot once per minute. Presence lives in a separate table so its frequent writes do not invalidate the game-state subscription. Joining the call invokes a Convex action that checks the current seat and phase, then creates a LiveKit token. Microphone and camera start off. At least six people must be playing; a volunteer moderator is an additional, non-playing person.
 
 ### 3. Start and reveal roles
 

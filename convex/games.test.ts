@@ -81,6 +81,27 @@ describe("rooms and private game state", () => {
     expect(again.players).toHaveLength(1);
     await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(2) })).rejects.toThrow();
   });
+  it("keeps presence heartbeats out of the subscribed game state and checks them before starting", async () => {
+    vi.stubEnv("ALLOW_NO_MEDIA", "true");
+    const t = convexTest(schema, modules);
+    for (let n = 1; n <= 6; n++) await admit(t, n);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Presence", secret: secret(1) });
+    const seats = Array.from({ length: 6 }, (_, index) => ({ gameId: room.gameId, secret: secret(index + 1) }));
+    for (let n = 2; n <= 6; n++) await t.mutation(api.games.join, { code: room.code, name: `Player ${n}`, secret: secret(n) });
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    const before = await t.query(api.games.state, seats[0]);
+    const stalePlayer = before.players[1];
+    await t.run(async ctx => {
+      const presence = await ctx.db.query("presence").withIndex("by_player", q => q.eq("playerId", stalePlayer.id)).first();
+      await ctx.db.patch(presence!._id, { lastSeen: Date.now() - 180_000 });
+    });
+    await expect(t.mutation(api.games.start, seats[0])).rejects.toThrow(/connected and ready/i);
+    await t.mutation(api.games.heartbeat, seats[1]);
+    expect(await t.query(api.games.state, seats[0])).toEqual(before);
+    const latest = await t.query(api.games.presence, seats[0]);
+    expect(latest[stalePlayer.id]).toBeGreaterThan(Date.now() - 30_000);
+    await t.mutation(api.games.start, seats[0]);
+  });
   it("never includes another player's role or investigation in their private view", async () => {
     const t = convexTest(schema, modules);
     await admit(t, 1); await admit(t, 2);
