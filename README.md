@@ -56,6 +56,8 @@ The invite command prints an invitation ID. To revoke access later, run `npx con
 
 For a solo guest-mode flow check, set `NEXT_PUBLIC_CONVEX_URL` to the target Convex URL before running `node scripts/fill-local-room.mjs ROOM_CODE`. The helper derives the target deployment from that URL and will create test invitations and seats in that deployment. It does not create WorkOS accounts, so it cannot fill a WorkOS-protected room. Use a throwaway room; test seats cannot test real video or hidden-role conversations.
 
+For a throwaway hosted room with WorkOS sign-in, a Convex project admin can add ready, non-playing test seats with `npx convex run testSeats:fill '{"code":"ROOM_CODE","count":6}' --deployment polite-buzzard-693`. Use `count:5` when the organizer is playing, or `count:6` when the organizer is a volunteer moderator. This is an internal mutation available only through the authenticated Convex CLI, never from the website. It must run while the room is in the lobby; rerunning it refreshes the same seats for another two minutes. The fake seats have no WorkOS accounts, cannot join LiveKit, and cannot vote or use night actions. Do not use this command in a room intended for a real game with friends.
+
 ## Invited email accounts
 
 The current live site uses WorkOS **Staging** accounts for entry, backed by Convex deployment `polite-buzzard-693`. Public signup is disabled in WorkOS, and players are invited by email. WorkOS Staging is for testing; switch to a WorkOS Production environment before serving ongoing public traffic. Local Convex remains in guest mode unless `AUTHKIT_AUTH_REQUIRED` is enabled there. You do not need to create another Next.js project. The `clerk-nextjs/` folder from the failed Clerk setup is unused by this app.

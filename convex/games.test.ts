@@ -39,6 +39,23 @@ describe("rooms and private game state", () => {
     await expect(t.action(api.media.token, { gameId: room.gameId, secret: secret(1), epoch: 0 })).rejects.toThrow(/sign in/i);
     await expect(otherApp.action(api.media.token, { gameId: room.gameId, secret: secret(1), epoch: 0 })).rejects.toThrow(/Mafia application/i);
   });
+  it("lets an admin fill an invited-account lobby with repeatable test-only seats", async () => {
+    vi.stubEnv("AUTHKIT_AUTH_REQUIRED", "true");
+    vi.stubEnv("WORKOS_CLIENT_ID", "client_mafia");
+    const t = convexTest(schema, modules);
+    const host = t.withIdentity({ subject: "user_host", client_id: "client_mafia" });
+    const room = await host.mutation(api.games.create, { name: "Host", title: "Hosted test", secret: secret(1) });
+    await host.mutation(api.games.setNarrationMode, { gameId: room.gameId, secret: secret(1), mode: "volunteer" });
+    await host.mutation(api.games.volunteerNarrator, { gameId: room.gameId, secret: secret(1), volunteer: true });
+    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).toEqual({ added: 6, refreshed: 0, totalPlayers: 7 });
+    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).toEqual({ added: 0, refreshed: 6, totalPlayers: 7 });
+    const state = await host.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
+    expect(state.players).toHaveLength(7);
+    expect(state.players.filter(player => player.ready)).toHaveLength(6);
+    await expect(t.query(api.games.state, { gameId: room.gameId, secret: secret(1) })).rejects.toThrow(/sign in/i);
+    await t.run(async ctx => { await ctx.db.patch(room.gameId, { phase: "day" }); });
+    await expect(t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).rejects.toThrow(/before the game starts/i);
+  });
   it("admits one guest per invite and revocation immediately removes access", async () => {
     const t = convexTest(schema, modules);
     expect(await t.query(api.auth.mode)).toBe("guest");

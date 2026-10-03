@@ -17,6 +17,7 @@ import type * as lib_bridge from "../lib/bridge.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_rules from "../lib/rules.js";
 import type * as media from "../media.js";
+import type * as testSeats from "../testSeats.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   "lib/presence": typeof lib_presence;
   "lib/rules": typeof lib_rules;
   media: typeof media;
+  testSeats: typeof testSeats;
 }>;
 
 /**
