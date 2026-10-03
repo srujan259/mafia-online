@@ -169,6 +169,28 @@ describe("rooms and private game state", () => {
     expect(resumed.game.deadline).toBeGreaterThan(Date.now());
     await expect(t.mutation(api.games.resume, { ...seats[0], epoch: state.game.epoch })).rejects.toThrow(/not paused/i);
   });
+  it("pauses an attended automatic game after two fully inactive rounds", async () => {
+    vi.stubEnv("ALLOW_NO_MEDIA", "true");
+    const t = convexTest(schema, modules);
+    for (let n = 1; n <= 6; n++) await admit(t, n);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Idle test", secret: secret(1) });
+    const seats = Array.from({ length: 6 }, (_, index) => ({ gameId: room.gameId, secret: secret(index + 1) }));
+    for (let n = 2; n <= 6; n++) await t.mutation(api.games.join, { code: room.code, name: `Player ${n}`, secret: secret(n) });
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    await t.mutation(api.games.start, seats[0]);
+    await t.run(async ctx => { await ctx.db.patch(room.gameId, { phase: "vote", epoch: 6, round: 2, idleRounds: 1, deadline: Date.now() - 1 }); });
+    await t.mutation(internal.games.advance, { gameId: room.gameId, epoch: 6 });
+    let state = await t.query(api.games.state, seats[0]);
+    expect(state.game).toMatchObject({ phase: "vote", round: 2, pauseReason: "inactive" });
+    expect(state.game.deadline).toBeUndefined();
+    await t.mutation(api.games.resume, { ...seats[0], epoch: 6 });
+    await t.mutation(api.games.choose, { ...seats[0], epoch: 6, skip: true });
+    await t.run(async ctx => { await ctx.db.patch(room.gameId, { deadline: Date.now() - 1 }); });
+    await t.mutation(internal.games.advance, { gameId: room.gameId, epoch: 6 });
+    state = await t.query(api.games.state, seats[0]);
+    expect(state.game.phase).toBe("transition");
+    expect((await t.run(ctx => ctx.db.get(room.gameId)))!.idleRounds).toBe(0);
+  });
   it("never includes another player's role or investigation in their private view", async () => {
     const t = convexTest(schema, modules);
     await admit(t, 1); await admit(t, 2);

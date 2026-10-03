@@ -25,7 +25,7 @@ async function event(ctx: MutationCtx, game: Doc<"games">, text: string, kind = 
 }
 async function transition(ctx: MutationCtx, game: Doc<"games">, nextPhase: Phase, nextNightStage?: NightStage): Promise<void> {
   const epoch = game.epoch + 1;
-  await ctx.db.patch(game._id, { phase: "transition", nextPhase, nextNightStage, epoch, deadline: undefined, pausedAt: undefined, mediaError: undefined });
+  await ctx.db.patch(game._id, { phase: "transition", nextPhase, nextNightStage, epoch, deadline: undefined, pausedAt: undefined, pauseReason: undefined, mediaError: undefined });
   await ctx.scheduler.runAfter(0, internal.media.closeAndAdvance, { gameId: game._id, epoch, oldRoom: game.mediaRoom, attempt: 0 });
 }
 
@@ -43,7 +43,7 @@ export const create = mutation({
       if (!(await ctx.db.query("games").withIndex("by_code", q => q.eq("code", code)).first())) break;
       if (attempt === 9) throw new ConvexError("Could not create a room. Please try again.");
     }
-    const gameId = await ctx.db.insert("games", { code, title, phase: "lobby", round: 0, epoch: 0, narrationMode: "automatic", daySeconds: 180, nightSeconds: 60, voteSeconds: 30, smallGameMafiaCount: 1, createdAt: Date.now() });
+    const gameId = await ctx.db.insert("games", { code, title, phase: "lobby", round: 0, epoch: 0, narrationMode: "automatic", daySeconds: 180, nightSeconds: 60, voteSeconds: 30, smallGameMafiaCount: 1, idleRounds: 0, createdAt: Date.now() });
     const playerId = await ctx.db.insert("players", { gameId, sessionHash: hash, name, alive: true, ready: false, lastSeen: Date.now(), joinedAt: Date.now() });
     await ctx.db.insert("presence", { gameId, playerId, lastSeen: Date.now() });
     await ctx.db.patch(gameId, { hostId: playerId, mediaRoom: `mafia-${gameId}-0-table` });
@@ -88,7 +88,7 @@ export const state = query({
     const activeRole = game.phase === "night" ? game.nightStage : undefined;
     const expected = game.phase === "vote" ? players.filter(p => p.alive).length : activeRole ? players.filter(p => p.alive && p.role === activeRole).length : 0;
     return {
-      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, pausedAt: game.pausedAt, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
+      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, pausedAt: game.pausedAt, pauseReason: game.pauseReason, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
       me: { id: player._id, role: player.role, alive: player.alive, ready: player.ready, isNarrator },
       players: players.map(p => ({ id: p._id, name: p.name, alive: p.alive, ready: p.ready, isNarrator: game.narrationMode === "volunteer" && game.narratorId === p._id, lastSeen: p.lastSeen, role: game.phase === "ended" ? p.role : undefined })),
       teammates,
@@ -243,6 +243,15 @@ async function advanceGame(ctx: MutationCtx, game: Doc<"games">): Promise<void> 
       await event(ctx, game, eliminated ? `Morning arrives. ${players.find(p => p._id === eliminated)!.name} did not survive the night.` : "Morning arrives. Everyone survived the night.", "dawn");
       next = "day";
     } else if (game.phase === "vote") {
+      if (game.narrationMode !== "volunteer") {
+        const nightChoices = (await Promise.all([4, 3, 2].map(offset => ctx.db.query("choices").withIndex("by_game_epoch", q => q.eq("gameId", game._id).eq("epoch", game.epoch - offset)).collect()))).flat();
+        const idleRounds = choices.length || nightChoices.length ? 0 : (game.idleRounds ?? 0) + 1;
+        if (idleRounds >= 2) {
+          await ctx.db.patch(game._id, { idleRounds, pausedAt: Date.now(), pauseReason: "inactive", deadline: undefined });
+          return;
+        }
+        if (idleRounds !== (game.idleRounds ?? 0)) await ctx.db.patch(game._id, { idleRounds });
+      }
       const outcome = resolveVote(players, choices); eliminated = outcome.eliminatedId;
       await event(ctx, game, eliminated ? `The town voted out ${players.find(p => p._id === eliminated)!.name}. Their role stays secret.` : "The vote ends without an elimination.", "vote");
       const tally = Object.entries(outcome.counts).map(([id, n]) => `${id === "skip" ? "Skip" : players.find(p => p._id === id)?.name}: ${n}`).join(" · ");
@@ -262,7 +271,7 @@ export const advance = internalMutation({ args: { gameId: v.id("games"), epoch: 
   if (!game || game.narrationMode === "volunteer" || game.epoch !== args.epoch || !game.deadline || Date.now() < game.deadline || game.phase === "transition") return null;
   const living = (await playersIn(ctx, game._id)).filter(p => p.alive);
   if ((await Promise.all(living.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) {
-    await ctx.db.patch(game._id, { deadline: undefined, pausedAt: Date.now() });
+    await ctx.db.patch(game._id, { deadline: undefined, pausedAt: Date.now(), pauseReason: "disconnected" });
     return null;
   }
   await advanceGame(ctx, game);
@@ -276,7 +285,7 @@ export const resume = mutation({ args: { ...credentials, epoch: v.number() }, ha
   if ((await Promise.all(living.map(p => lastSeen(ctx, p)))).some(seen => Date.now() - seen >= PRESENCE_TIMEOUT_MS)) throw new ConvexError("Wait for every living player to reconnect before resuming.");
   const seconds = game.phase === "reveal" ? 12 : game.phase === "night" ? nightStageSeconds(game.nightSeconds, game.nightStage ?? "mafia") : game.phase === "day" ? game.daySeconds : game.voteSeconds;
   const deadline = Date.now() + seconds * 1000;
-  await ctx.db.patch(game._id, { pausedAt: undefined, deadline });
+  await ctx.db.patch(game._id, { pausedAt: undefined, pauseReason: undefined, deadline });
   await ctx.scheduler.runAt(deadline, internal.games.advance, { gameId: game._id, epoch: game.epoch });
 } });
 
@@ -326,6 +335,6 @@ export const rematch = mutation({ args: credentials, handler: async (ctx, args) 
   }
   for (const e of await ctx.db.query("events").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(e._id);
   for (const message of await ctx.db.query("mafiaMessages").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(message._id);
-  await ctx.db.patch(game._id, { winner: undefined, round: 0, watchRoom: undefined });
+  await ctx.db.patch(game._id, { winner: undefined, round: 0, watchRoom: undefined, pausedAt: undefined, pauseReason: undefined, idleRounds: 0 });
   await transition(ctx, game, "lobby");
 } });
