@@ -19,7 +19,7 @@ export default defineSchema({
     round: v.number(), epoch: v.number(), deadline: v.optional(v.number()), pausedAt: v.optional(v.number()),
     pauseReason: v.optional(v.union(v.literal("disconnected"), v.literal("inactive"))), idleRounds: v.optional(v.number()),
     nextPhase: v.optional(phase), nightStage: v.optional(nightStage), nextNightStage: v.optional(nightStage), mediaRoom: v.optional(v.string()),
-    winner: v.optional(v.union(v.literal("town"), v.literal("mafia"))),
+    winner: v.optional(v.union(v.literal("town"), v.literal("mafia"))), endedEarly: v.optional(v.boolean()),
     daySeconds: v.number(), nightSeconds: v.number(), voteSeconds: v.number(),
     smallGameMafiaCount: v.optional(v.union(v.literal(1), v.literal(2))),
     narrationMode: v.optional(narrationMode), narratorId: v.optional(v.id("players")),

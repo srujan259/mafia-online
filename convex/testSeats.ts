@@ -8,7 +8,7 @@ const names = ["Test Meera", "Test Aarav", "Test Isha", "Test Kabir", "Test Tara
 export const fill = internalMutation({
   args: { code: v.string(), count: v.number() },
   handler: async (ctx, { code, count }) => {
-    if (count !== 5 && count !== 6) throw new ConvexError("Choose five or six test seats.");
+    if (![4, 5, 6].includes(count)) throw new ConvexError("Choose four, five, or six test seats.");
     const game = await ctx.db.query("games").withIndex("by_code", q => q.eq("code", code.trim().toUpperCase())).first();
     if (!game) throw new ConvexError("That room wasn’t found on this Convex deployment.");
     if (game.phase !== "lobby") throw new ConvexError("Test seats can only be added before the game starts.");

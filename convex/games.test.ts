@@ -47,8 +47,8 @@ describe("rooms and private game state", () => {
     const room = await host.mutation(api.games.create, { name: "Host", title: "Hosted test", secret: secret(1) });
     await host.mutation(api.games.setNarrationMode, { gameId: room.gameId, secret: secret(1), mode: "volunteer" });
     await host.mutation(api.games.volunteerNarrator, { gameId: room.gameId, secret: secret(1), volunteer: true });
-    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).toEqual({ added: 6, refreshed: 0, totalPlayers: 7 });
-    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).toEqual({ added: 0, refreshed: 6, totalPlayers: 7 });
+    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 4 })).toEqual({ added: 4, refreshed: 0, totalPlayers: 5 });
+    expect(await t.mutation(internal.testSeats.fill, { code: room.code, count: 6 })).toEqual({ added: 2, refreshed: 4, totalPlayers: 7 });
     const state = await host.query(api.games.state, { gameId: room.gameId, secret: secret(1) });
     expect(state.players).toHaveLength(7);
     expect(state.players.filter(player => player.ready)).toHaveLength(6);
@@ -168,6 +168,28 @@ describe("rooms and private game state", () => {
     expect(resumed.game.pausedAt).toBeUndefined();
     expect(resumed.game.deadline).toBeGreaterThan(Date.now());
     await expect(t.mutation(api.games.resume, { ...seats[0], epoch: state.game.epoch })).rejects.toThrow(/not paused/i);
+  });
+  it("lets only the organizer end an automatic game and invalidates its timer and media grants", async () => {
+    vi.stubEnv("ALLOW_NO_MEDIA", "true");
+    const t = convexTest(schema, modules);
+    for (let n = 1; n <= 6; n++) await admit(t, n);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Stop test", secret: secret(1) });
+    const seats = Array.from({ length: 6 }, (_, index) => ({ gameId: room.gameId, secret: secret(index + 1) }));
+    for (let n = 2; n <= 6; n++) await t.mutation(api.games.join, { code: room.code, name: `Player ${n}`, secret: secret(n) });
+    for (const seat of seats) await t.mutation(api.games.ready, { ...seat, ready: true });
+    await t.mutation(api.games.start, seats[0]);
+    const transitioning = await t.query(api.games.state, seats[0]);
+    await t.mutation(internal.games.finishTransition, { gameId: room.gameId, epoch: transitioning.game.epoch });
+    const running = await t.query(api.games.state, seats[0]);
+    await expect(t.mutation(api.games.stop, seats[1])).rejects.toThrow(/organizer/i);
+    await t.mutation(api.games.stop, seats[0]);
+    const stopped = await t.query(api.games.state, seats[0]);
+    expect(stopped.game).toMatchObject({ phase: "ended", endedEarly: true });
+    expect(stopped.game.deadline).toBeUndefined();
+    expect(stopped.mediaAllowed).toBe(false);
+    expect(await t.query(internal.games.mediaGrant, seats[0])).toBeNull();
+    await t.mutation(internal.games.advance, { gameId: room.gameId, epoch: running.game.epoch });
+    expect((await t.query(api.games.state, seats[0])).game.phase).toBe("ended");
   });
   it("pauses an attended automatic game after two fully inactive rounds", async () => {
     vi.stubEnv("ALLOW_NO_MEDIA", "true");

@@ -75,3 +75,19 @@ export const closeAndAdvance = internalAction({
     return null;
   },
 });
+
+export const closeRoom = internalAction({
+  args: { room: v.string(), attempt: v.number() },
+  handler: async (ctx, args): Promise<null> => {
+    const settings = config();
+    if (!settings) return null;
+    try {
+      const rooms = new RoomServiceClient(settings.url.replace(/^ws/, "http"), settings.key, settings.secret);
+      await rooms.deleteRoom(args.room);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "not_found") return null;
+      if (args.attempt < 5) await ctx.scheduler.runAfter(Math.min(30_000, 2000 * 2 ** args.attempt), internal.media.closeRoom, { room: args.room, attempt: args.attempt + 1 });
+    }
+    return null;
+  },
+});

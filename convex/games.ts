@@ -88,7 +88,7 @@ export const state = query({
     const activeRole = game.phase === "night" ? game.nightStage : undefined;
     const expected = game.phase === "vote" ? players.filter(p => p.alive).length : activeRole ? players.filter(p => p.alive && p.role === activeRole).length : 0;
     return {
-      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, pausedAt: game.pausedAt, pauseReason: game.pauseReason, winner: game.winner, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
+      game: { _id: game._id, code: game.code, title: game.title, phase: game.phase, nightStage: game.phase === "night" ? game.nightStage : undefined, round: game.round, epoch: game.epoch, deadline: game.deadline, pausedAt: game.pausedAt, pauseReason: game.pauseReason, winner: game.winner, endedEarly: game.endedEarly, hostId: game.hostId, narratorId: game.narratorId, narrationMode: game.narrationMode ?? "automatic", daySeconds: game.daySeconds, nightSeconds: game.nightSeconds, voteSeconds: game.voteSeconds, smallGameMafiaCount: game.smallGameMafiaCount ?? 1, mediaError: game.mediaError },
       me: { id: player._id, role: player.role, alive: player.alive, ready: player.ready, isNarrator },
       players: players.map(p => ({ id: p._id, name: p.name, alive: p.alive, ready: p.ready, isNarrator: game.narrationMode === "volunteer" && game.narratorId === p._id, lastSeen: p.lastSeen, role: game.phase === "ended" ? p.role : undefined })),
       teammates,
@@ -98,7 +98,7 @@ export const state = query({
       mafiaChoices: game.phase === "night" && (!game.nightStage || game.nightStage === "mafia") && player.alive && player.role === "mafia" ? choices.filter(c => teammates.includes(c.playerId)).map(c => ({ playerId: c.playerId, targetId: c.targetId, skip: c.skip })) : [],
       investigations: investigations.map(i => ({ targetId: i.targetId, round: i.round, isMafia: i.isMafia })),
       events: events.map(e => ({ id: e._id, text: e.text, round: e.round, kind: e.kind })),
-      mediaAllowed: !!mediaAccess(game.phase, player, game.nightStage, isNarrator),
+      mediaAllowed: !!game.mediaRoom && !!mediaAccess(game.phase, player, game.nightStage, isNarrator),
       narratorProgress: isNarrator && (activeRole || game.phase === "vote") ? { submitted: choices.filter(c => players.some(p => p._id === c.playerId && p.alive && (game.phase === "vote" || p.role === activeRole))).length, expected } : null,
     };
   },
@@ -199,6 +199,19 @@ export const start = mutation({ args: credentials, handler: async (ctx, args) =>
   await ctx.db.patch(game._id, { round: 1, watchRoom: game.narrationMode === "volunteer" ? `mafia-${game._id}-${game.epoch + 1}-watch` : undefined });
   await event(ctx, { ...game, round: 1 }, "Roles are dealt. Your secret is yours to keep.");
   await transition(ctx, game, "reveal");
+} });
+
+export const stop = mutation({ args: credentials, handler: async (ctx, args) => {
+  const { game, player } = await authorize(ctx, args.gameId, args.secret);
+  if (game.hostId !== player._id || game.phase === "lobby" || game.phase === "ended") throw new ConvexError("Only the organizer can end a running game.");
+  const oldRoom = game.mediaRoom;
+  await ctx.db.patch(game._id, {
+    phase: "ended", endedEarly: true, winner: undefined, epoch: game.epoch + 1,
+    deadline: undefined, pausedAt: undefined, pauseReason: undefined,
+    nextPhase: undefined, nextNightStage: undefined, mediaRoom: undefined, watchRoom: undefined, mediaError: undefined,
+  });
+  await event(ctx, game, `${player.name} ended the game for everyone.`, "announcement");
+  if (oldRoom) await ctx.scheduler.runAfter(0, internal.media.closeRoom, { room: oldRoom, attempt: 0 });
 } });
 
 export const choose = mutation({ args: { ...credentials, epoch: v.number(), targetId: v.optional(v.id("players")), skip: v.boolean() }, handler: async (ctx, args) => {
@@ -335,6 +348,6 @@ export const rematch = mutation({ args: credentials, handler: async (ctx, args) 
   }
   for (const e of await ctx.db.query("events").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(e._id);
   for (const message of await ctx.db.query("mafiaMessages").withIndex("by_game", q => q.eq("gameId", game._id)).collect()) await ctx.db.delete(message._id);
-  await ctx.db.patch(game._id, { winner: undefined, round: 0, watchRoom: undefined, pausedAt: undefined, pauseReason: undefined, idleRounds: 0 });
+  await ctx.db.patch(game._id, { winner: undefined, endedEarly: undefined, round: 0, watchRoom: undefined, pausedAt: undefined, pauseReason: undefined, idleRounds: 0 });
   await transition(ctx, game, "lobby");
 } });
