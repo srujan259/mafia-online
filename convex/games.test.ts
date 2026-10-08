@@ -198,13 +198,17 @@ describe("rooms and private game state", () => {
     await t.mutation(api.games.join, { code: room.code, name: "Friend", secret: secret(2) });
     const host = { gameId: room.gameId, secret: secret(1) };
     const friend = { gameId: room.gameId, secret: secret(2) };
+    expect(await t.query(api.games.resumeStatus, host)).toEqual({ closed: false, finished: false });
     await expect(t.mutation(api.games.stop, friend)).rejects.toThrow(/organizer/i);
     await t.mutation(api.games.stop, host);
     const state = await t.query(api.games.state, host);
     expect(state.game).toMatchObject({ phase: "ended", round: 0, endedEarly: true });
     expect(state.game.deadline).toBeUndefined();
     expect(state.mediaAllowed).toBe(false);
-    await expect(t.mutation(api.games.join, { code: room.code, name: "Another", secret: secret(3) })).rejects.toThrow(/started/i);
+    expect(await t.query(api.games.resumeStatus, host)).toEqual({ closed: true, finished: true });
+    await expect(t.mutation(api.games.join, { code: room.code, name: "Host", secret: secret(1) })).rejects.toThrow(/closed/i);
+    await expect(t.mutation(api.games.join, { code: room.code, name: "Another", secret: secret(3) })).rejects.toThrow(/closed/i);
+    await expect(t.mutation(api.games.rematch, host)).rejects.toThrow(/closed/i);
     await expect(t.mutation(api.games.stop, host)).rejects.toThrow(/organizer/i);
   });
   it("pauses an attended automatic game after two fully inactive rounds", async () => {

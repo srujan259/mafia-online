@@ -105,7 +105,9 @@ function Session({ accountMode = false, seatStorageKey = "mafia-seat" }: { accou
   const [secret, setSecret] = useState("");
   const [seat, setSeat] = useState<Seat | null>(null);
   const [saved, setSaved] = useState<Seat | null>(null);
+  const [savedStatus, setSavedStatus] = useState<"checking" | "active" | "finished" | "unavailable">("checking");
   const [storageError, setStorageError] = useState(false);
+  const convex = useConvex();
   const invitationStatus = useQuery(api.invitations.status, !accountMode && secret ? { secret } : "skip");
   const admitted = accountMode ? true : invitationStatus;
   useEffect(() => {
@@ -120,12 +122,25 @@ function Session({ accountMode = false, seatStorageKey = "mafia-seat" }: { accou
       if (previous) { const p = JSON.parse(previous); if (typeof p.gameId === "string" && /^[A-Z2-9]{6}$/.test(p.code) && typeof p.name === "string") setSaved(p); }
     } catch { setStorageError(true); }
   }, [seatStorageKey]);
-  function enter(s: Seat) { localStorage.setItem(seatStorageKey, JSON.stringify(s)); setSaved(s); setSeat(s); }
+  useEffect(() => {
+    if (!saved || !secret || seat) return;
+    let current = true;
+    setSavedStatus("checking");
+    void convex.query(api.games.resumeStatus, { gameId: saved.gameId, secret }).then(status => {
+      if (!current) return;
+      if (status.closed) {
+        localStorage.removeItem(seatStorageKey);
+        setSaved(null);
+      } else setSavedStatus(status.finished ? "finished" : "active");
+    }).catch(() => { if (current) setSavedStatus("unavailable"); });
+    return () => { current = false; };
+  }, [convex, saved, secret, seat, seatStorageKey]);
+  function enter(s: Seat) { localStorage.setItem(seatStorageKey, JSON.stringify(s)); setSavedStatus("checking"); setSaved(s); setSeat(s); }
   if (storageError) return <div className="center-page"><Brand /><h1>Browser storage is needed.</h1><p>Enable site storage, then reload to keep your private seat.</p></div>;
   if (!secret || admitted === undefined) return <div className="center-page"><Brand /><Hourglass /><p>{accountMode ? "Preparing your table…" : "Checking your invitation…"}</p></div>;
   if (!admitted) return <InviteGate secret={secret} />;
   if (seat && secret) return <RoomBoundary onExit={() => setSeat(null)}><GameRoom secret={secret} seat={seat} onExit={() => setSeat(null)} /></RoomBoundary>;
-  return <Landing configured accountMode={accountMode} secret={secret} onEnter={enter} saved={saved} onResume={() => saved && setSeat(saved)} storageError={storageError} />;
+  return <Landing configured accountMode={accountMode} secret={secret} onEnter={enter} saved={savedStatus === "active" || savedStatus === "finished" ? saved : null} savedFinished={savedStatus === "finished"} onResume={() => saved && savedStatus !== "unavailable" && setSeat(saved)} storageError={storageError} />;
 }
 
 function InviteGate({ secret }: { secret: string }) {
@@ -143,7 +158,7 @@ function InviteGate({ secret }: { secret: string }) {
   return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Your invitation awaits.</h1><p className="muted">Enter the invitation code shared with you. You’ll still need a room code to join a friend’s game.</p><form onSubmit={submit}><label>Invitation code<input autoComplete="off" autoCapitalize="characters" spellCheck={false} placeholder="Paste your invitation code" value={code} onChange={event => setCode(event.target.value)} /></label><button className="primary full" type="submit" disabled={busy || !code.trim()}>{busy ? "Checking invitation…" : "Enter the game"} <ArrowRight size={17} /></button></form>{error && <p className="error" role="alert">{error}</p>}<p className="muted small invite-note">Your invitation stays linked to this browser. Keep its site data to keep access.</p></div></div>;
 }
 
-function Landing({ configured, accountMode = false, secret = "", onEnter, saved, onResume, storageError }: { configured: boolean; accountMode?: boolean; secret?: string; onEnter?: (s: Seat) => void; saved?: Seat | null; onResume?: () => void; storageError?: boolean }) {
+function Landing({ configured, accountMode = false, secret = "", onEnter, saved, savedFinished = false, onResume, storageError }: { configured: boolean; accountMode?: boolean; secret?: string; onEnter?: (s: Seat) => void; saved?: Seat | null; savedFinished?: boolean; onResume?: () => void; storageError?: boolean }) {
   const [mode, setMode] = useState<"create" | "join">("create");
   const [name, setName] = useState(""); const [code, setCode] = useState("");
   const [title, setTitle] = useState("The usual suspects");
@@ -169,7 +184,7 @@ function Landing({ configured, accountMode = false, secret = "", onEnter, saved,
         {mode === "create" ? <label>Room name<input maxLength={40} value={title} onChange={e => setTitle(e.target.value)} /></label> : <label>Invitation code<input className="code-input" maxLength={6} placeholder="WOLF42" value={code} onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ""))} /></label>}
         {configured ? <EnterButton secret={secret} name={name} title={title} code={code} mode={mode} onEnter={onEnter!} /> : <><button className="primary full" disabled>Room setup pending <ArrowRight size={17} /></button><p className="setup-note">Connect the Convex deployment to enable rooms. The setup steps are in the project README.</p></>}
         {storageError && <p className="error" role="alert">Browser storage is unavailable. Enable site storage to keep your seat when reconnecting.</p>}
-        {saved && <button className="resume full" onClick={onResume}>Return to {saved.code} as {saved.name} <ArrowRight size={15} /></button>}
+        {saved && <button className="resume full" onClick={onResume}>{savedFinished ? `View results for ${saved.code}` : `Return to ${saved.code} as ${saved.name}`} <ArrowRight size={15} /></button>}
         <div className="entry-footer"><LockKeyhole size={15} /><span>Private rooms. {accountMode ? "Sign in with an invited email." : "No account needed."}<br />Friends need {accountMode ? "an email invitation" : "a site invitation"} and your room code.</span></div>
       </section>
     </main>
@@ -336,7 +351,7 @@ export function GameRoom({ seat, secret, onExit }: { seat: Seat; secret: string;
         {data.investigations.length > 0 && <section className="panel"><h2><Search size={16} /> Your discoveries</h2>{data.investigations.map(i => <div className="discovery" key={i.round}><span>Night {i.round}</span><strong>{players.find(p => p.id === i.targetId)?.name}: {i.isMafia ? "Mafia" : "not Mafia"}</strong></div>)}</section>}
         <section className="panel"><h2>The story so far</h2><div className="timeline" aria-live="polite">{data.events.slice(0, 6).map(e => <div className="timeline-event" key={e.id}><span className="timeline-dot" /><div><small>Round {e.round}</small><p>{e.text}</p></div></div>)}</div></section>
         {host && game.phase !== "ended" && <button className="full secondary" disabled={busy} onClick={() => { if (window.confirm("End this game for everyone? Timers and the call will stop.")) void run(() => stop(credentials)); }}>End game for everyone</button>}
-        {game.phase === "ended" && (host || me.isNarrator) && <button className="primary full" disabled={busy} onClick={() => run(() => rematch(credentials))}>{game.round === 0 ? "Reopen lobby" : "Another round?"} <ArrowRight size={17} /></button>}
+        {game.phase === "ended" && !game.endedEarly && (host || me.isNarrator) && <button className="primary full" disabled={busy} onClick={() => run(() => rematch(credentials))}>Another round? <ArrowRight size={17} /></button>}
         {game.phase === "night" && <div className="sunrise-note"><Sunrise size={18} /><div><strong>Back together at sunrise</strong><p>The host wakes each role in turn. Everyone returns when the Doctor’s turn ends.</p></div></div>}
       </>}
       {hostAbsent && !host && <button onClick={() => run(() => reclaim(credentials))} disabled={busy}>Host disconnected · take over</button>}

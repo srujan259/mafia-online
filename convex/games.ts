@@ -58,6 +58,7 @@ export const join = mutation({
     const code = args.code.trim().toUpperCase();
     const game = await ctx.db.query("games").withIndex("by_code", q => q.eq("code", code)).first();
     if (!game) throw new ConvexError("That room wasn’t found. Check the room code.");
+    if (game.endedEarly) throw new ConvexError("This room was closed. Create or join a new room.");
     const players = await playersIn(ctx, game._id);
     const existing = players.find(p => p.sessionHash === hash);
     if (existing) { await touchPresence(ctx, existing); return { gameId: game._id, code }; }
@@ -70,6 +71,11 @@ export const join = mutation({
     return { gameId: game._id, code };
   },
 });
+
+export const resumeStatus = query({ args: credentials, handler: async (ctx, args) => {
+  const { game } = await authorize(ctx, args.gameId, args.secret);
+  return { closed: !!game.endedEarly, finished: game.phase === "ended" };
+} });
 
 export const state = query({
   args: credentials,
@@ -340,6 +346,7 @@ export const watchGrant = internalQuery({ args: { ...credentials, trustedSubject
 } });
 export const rematch = mutation({ args: credentials, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
+  if (game.endedEarly) throw new ConvexError("This room was closed. Create a new room to play again.");
   if ((game.hostId !== player._id && game.narratorId !== player._id) || game.phase !== "ended") throw new ConvexError("Only the organizer or volunteer moderator can open a new game.");
   const players = await playersIn(ctx, game._id);
   for (const p of players) {
