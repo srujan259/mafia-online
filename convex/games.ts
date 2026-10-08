@@ -203,14 +203,14 @@ export const start = mutation({ args: credentials, handler: async (ctx, args) =>
 
 export const stop = mutation({ args: credentials, handler: async (ctx, args) => {
   const { game, player } = await authorize(ctx, args.gameId, args.secret);
-  if (game.hostId !== player._id || game.phase === "lobby" || game.phase === "ended") throw new ConvexError("Only the organizer can end a running game.");
+  if (game.hostId !== player._id || game.phase === "ended") throw new ConvexError("Only the organizer can close this room.");
   const oldRoom = game.mediaRoom;
   await ctx.db.patch(game._id, {
     phase: "ended", endedEarly: true, winner: undefined, epoch: game.epoch + 1,
     deadline: undefined, pausedAt: undefined, pauseReason: undefined,
     nextPhase: undefined, nextNightStage: undefined, mediaRoom: undefined, watchRoom: undefined, mediaError: undefined,
   });
-  await event(ctx, game, `${player.name} ended the game for everyone.`, "announcement");
+  await event(ctx, game, game.phase === "lobby" ? `${player.name} closed the room.` : `${player.name} ended the game for everyone.`, "announcement");
   if (oldRoom) await ctx.scheduler.runAfter(0, internal.media.closeRoom, { room: oldRoom, attempt: 0 });
 } });
 

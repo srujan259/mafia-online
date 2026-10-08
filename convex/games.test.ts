@@ -191,6 +191,22 @@ describe("rooms and private game state", () => {
     await t.mutation(internal.games.advance, { gameId: room.gameId, epoch: running.game.epoch });
     expect((await t.query(api.games.state, seats[0])).game.phase).toBe("ended");
   });
+  it("lets the organizer close an unstarted lobby without starting a timer", async () => {
+    const t = convexTest(schema, modules);
+    await admit(t, 1); await admit(t, 2); await admit(t, 3);
+    const room = await t.mutation(api.games.create, { name: "Host", title: "Unused lobby", secret: secret(1) });
+    await t.mutation(api.games.join, { code: room.code, name: "Friend", secret: secret(2) });
+    const host = { gameId: room.gameId, secret: secret(1) };
+    const friend = { gameId: room.gameId, secret: secret(2) };
+    await expect(t.mutation(api.games.stop, friend)).rejects.toThrow(/organizer/i);
+    await t.mutation(api.games.stop, host);
+    const state = await t.query(api.games.state, host);
+    expect(state.game).toMatchObject({ phase: "ended", round: 0, endedEarly: true });
+    expect(state.game.deadline).toBeUndefined();
+    expect(state.mediaAllowed).toBe(false);
+    await expect(t.mutation(api.games.join, { code: room.code, name: "Another", secret: secret(3) })).rejects.toThrow(/started/i);
+    await expect(t.mutation(api.games.stop, host)).rejects.toThrow(/organizer/i);
+  });
   it("pauses an attended automatic game after two fully inactive rounds", async () => {
     vi.stubEnv("ALLOW_NO_MEDIA", "true");
     const t = convexTest(schema, modules);
