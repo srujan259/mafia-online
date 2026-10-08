@@ -52,7 +52,7 @@ function useAuthFromAuthKit() {
     if (!workosToken || !bridgeClient) return null;
     return await bridgeClient.action(api.authBridge.exchange, { workosToken });
   }, [userId, refresh, getAccessToken]);
-  return { isLoading: isLoading || (!!userId && !accessToken && tokenLoading), isAuthenticated: !!userId && !!accessToken, fetchAccessToken };
+  return { isLoading: (!userId && isLoading) || (!!userId && !accessToken && tokenLoading), isAuthenticated: !!userId && !!accessToken, fetchAccessToken };
 }
 function ModeGate({ authkitConfigured, initialAuth }: { authkitConfigured: boolean; initialAuth?: InitialAuth }) {
   const [mode, setMode] = useState<"authkit" | "guest" | null>(null);
@@ -75,10 +75,11 @@ function AuthKitSession() {
   const connection = useConvexConnectionState();
   const [slow, setSlow] = useState(false);
   useEffect(() => { const timer = window.setTimeout(() => setSlow(true), 10000); return () => window.clearTimeout(timer); }, []);
-  const checking = loading || isLoading || (!!user && tokenLoading);
+  // Background token refresh must not unmount the active room and drop its call.
+  const checking = !isAuthenticated && (loading || isLoading || (!!user && tokenLoading));
   if (checking && !slow) return <div className="center-page"><Brand /><Hourglass /><p>Checking your account…</p></div>;
   if (!user) return <div className="center-page"><Brand /><div className="entry-panel invite-panel"><span className="eyebrow">Private game night</span><h1>Sign in to play.</h1><p className="muted">Use the email address invited to Mafia. You’ll still need a room code to join a game.</p><a className="primary full" href="/sign-in">Sign in with email <ArrowRight size={17} /></a></div></div>;
-  if (!isAuthenticated || checking) {
+  if (!isAuthenticated) {
     let issuer = "unavailable";
     let audience = "unavailable";
     let application = "unavailable";
